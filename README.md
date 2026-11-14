@@ -1,1 +1,0 @@
-# ipl_auction_db
