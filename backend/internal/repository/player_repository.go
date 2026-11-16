@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Player struct {
@@ -20,10 +19,10 @@ type Player struct {
 }
 
 type PlayerRepository struct {
-	db *pgxpool.Pool
+	db DBTX
 }
 
-func NewPlayerRepository(db *pgxpool.Pool) *PlayerRepository {
+func NewPlayerRepository(db DBTX) *PlayerRepository {
 	return &PlayerRepository{db: db}
 }
 

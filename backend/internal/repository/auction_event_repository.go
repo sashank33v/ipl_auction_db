@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type AuctionEvent struct {
@@ -20,11 +19,11 @@ type AuctionEvent struct {
 }
 
 type AuctionEventRepository struct {
-	db *pgxpool.Pool
+	db DBTX
 }
 
 func NewAuctionEventRepository(
-	db *pgxpool.Pool,
+	db DBTX,
 ) *AuctionEventRepository {
 	return &AuctionEventRepository{db: db}
 }

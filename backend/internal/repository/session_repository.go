@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Session struct {
@@ -20,10 +19,10 @@ type Session struct {
 }
 
 type SessionRepository struct {
-	db *pgxpool.Pool
+	db DBTX
 }
 
-func NewSessionRepository(db *pgxpool.Pool) *SessionRepository {
+func NewSessionRepository(db DBTX) *SessionRepository {
 	return &SessionRepository{db: db}
 }
 

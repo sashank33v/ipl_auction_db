@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type OutboxEvent struct {
@@ -22,10 +21,10 @@ type OutboxEvent struct {
 }
 
 type OutboxEventRepository struct {
-	db *pgxpool.Pool
+	db DBTX
 }
 
-func NewOutboxEventRepository(db *pgxpool.Pool) *OutboxEventRepository {
+func NewOutboxEventRepository(db DBTX) *OutboxEventRepository {
 	return &OutboxEventRepository{db: db}
 }
 

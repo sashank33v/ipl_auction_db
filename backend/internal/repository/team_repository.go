@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Team struct {
@@ -20,10 +19,10 @@ type Team struct {
 }
 
 type TeamRepository struct {
-	db *pgxpool.Pool
+	db DBTX
 }
 
-func NewTeamRepository(db *pgxpool.Pool) *TeamRepository {
+func NewTeamRepository(db DBTX) *TeamRepository {
 	return &TeamRepository{db: db}
 }
 

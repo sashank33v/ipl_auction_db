@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Auction struct {
@@ -29,10 +28,10 @@ type Auction struct {
 }
 
 type AuctionRepository struct {
-	db *pgxpool.Pool
+	db DBTX
 }
 
-func NewAuctionRepository(db *pgxpool.Pool) *AuctionRepository {
+func NewAuctionRepository(db DBTX) *AuctionRepository {
 	return &AuctionRepository{db: db}
 }
 

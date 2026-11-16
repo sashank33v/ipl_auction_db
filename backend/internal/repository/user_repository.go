@@ -5,11 +5,10 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type UserRepository struct {
-	db *pgxpool.Pool
+	db DBTX
 }
 type User struct {
 	ID           string `json:"id"`
@@ -18,7 +17,7 @@ type User struct {
 	PasswordHash string `json:"-"`
 }
 
-func NewUserRepository(db *pgxpool.Pool) *UserRepository {
+func NewUserRepository(db DBTX) *UserRepository {
 	return &UserRepository{
 		db: db,
 	}

@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Room struct {
@@ -23,10 +22,10 @@ type Room struct {
 }
 
 type RoomRepository struct {
-	db *pgxpool.Pool
+	db DBTX
 }
 
-func NewRoomRepository(db *pgxpool.Pool) *RoomRepository {
+func NewRoomRepository(db DBTX) *RoomRepository {
 	return &RoomRepository{db: db}
 }
 

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type RoomParticipant struct {
@@ -18,10 +17,10 @@ type RoomParticipant struct {
 }
 
 type RoomParticipantRepository struct {
-	db *pgxpool.Pool
+	db DBTX
 }
 
-func NewRoomParticipantRepository(db *pgxpool.Pool) *RoomParticipantRepository {
+func NewRoomParticipantRepository(db DBTX) *RoomParticipantRepository {
 	return &RoomParticipantRepository{db: db}
 }
 

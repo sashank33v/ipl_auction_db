@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Bid struct {
@@ -21,10 +20,10 @@ type Bid struct {
 }
 
 type BidRepository struct {
-	db *pgxpool.Pool
+	db DBTX
 }
 
-func NewBidRepository(db *pgxpool.Pool) *BidRepository {
+func NewBidRepository(db DBTX) *BidRepository {
 	return &BidRepository{db: db}
 }
 

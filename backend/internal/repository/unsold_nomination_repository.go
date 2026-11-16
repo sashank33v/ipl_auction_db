@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type UnsoldNomination struct {
@@ -19,11 +18,11 @@ type UnsoldNomination struct {
 }
 
 type UnsoldNominationRepository struct {
-	db *pgxpool.Pool
+	db DBTX
 }
 
 func NewUnsoldNominationRepository(
-	db *pgxpool.Pool,
+	db DBTX,
 ) *UnsoldNominationRepository {
 	return &UnsoldNominationRepository{db: db}
 }
