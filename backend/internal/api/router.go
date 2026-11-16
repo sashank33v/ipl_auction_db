@@ -2,19 +2,21 @@ package api
 
 import (
 	"net/http"
+	"time"
 
-	"github.com/go-chi/chi/middleware"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
+
 	"github.com/go-chi/chi/v5"
+	appmiddleware "github.com/sashank33v/ipl_auction_db/backend/internal/middleware"
 )
 
-func NewRouter() http.Handler {
+func NewRouter(frontendURL string) http.Handler {
 	r := chi.NewRouter()
-
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-
+	r.Use(chimiddleware.RequestID)
+	r.Use(appmiddleware.CORS(frontendURL))
+	r.Use(appmiddleware.Logger)
+	r.Use(appmiddleware.Recovery)
+	r.Use(chimiddleware.Timeout(30 * time.Second))
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"healthy"}`))
