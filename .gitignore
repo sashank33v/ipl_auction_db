@@ -1,0 +1,21 @@
+# Environment variables
+.env
+
+# Go
+/backend/bin/
+/backend/tmp/
+
+# Frontend
+/frontend/node_modules/
+/frontend/.next/
+/frontend/out/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
