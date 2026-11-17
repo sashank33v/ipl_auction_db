@@ -2,71 +2,65 @@ package services
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+
 	"github.com/sashank33v/ipl_auction_db/backend/internal/database"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
 )
 
-type AuctionWorkflowService struct {
+type BidWorkflowService struct {
 	txManager *database.TransactionManager
 }
 
-func NewAuctionWorkflowService(
+func NewBidWorkflowService(
 	txManager *database.TransactionManager,
-) *AuctionWorkflowService {
-	return &AuctionWorkflowService{
+) *BidWorkflowService {
+	return &BidWorkflowService{
 		txManager: txManager,
 	}
 }
 
-func (s *AuctionWorkflowService) AcceptBid(
+func (s *BidWorkflowService) AcceptBid(
 	ctx context.Context,
 	params repository.AcceptBidParams,
-) error {
+) (*repository.Bid, error) {
+	if s == nil || s.txManager == nil {
+		return nil, errors.New("transaction manager is not configured")
+	}
+
 	if params.AuctionID == "" ||
-		params.TeamID == "" ||
 		params.RoomPlayerID == "" ||
-		params.RequestID == "" ||
-		params.BidAmount == "" {
-		return errors.New("invalid bid request")
+		params.TeamID == "" ||
+		params.RequestID == "" {
+		return nil, errors.New("auction ID, room player ID, team ID and request ID are required")
 	}
 
-	if len(params.EventPayload) == 0 ||
-		!json.Valid(params.EventPayload) {
-		return errors.New("invalid event payload")
-	}
+	var acceptedBid *repository.Bid
 
-	return s.txManager.WithinTransaction(ctx, func(tx pgx.Tx) error {
-		var auctionStatus string
+	err := s.txManager.WithinTransaction(
+		ctx,
+		func(tx pgx.Tx) error {
+			bidRepo := repository.NewAuctionWorkflowRepository(tx)
 
-		err := tx.QueryRow(ctx, `
-			SELECT status
-			FROM auctions
-			WHERE id = $1
-			FOR UPDATE
-		`, params.AuctionID).Scan(&auctionStatus)
-
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return errors.New("auction not found")
+			bid, err := bidRepo.AcceptBid(ctx, params)
+			if err != nil {
+				return err
 			}
-			return fmt.Errorf("lock auction: %w", err)
-		}
+			if bid == nil {
+				return errors.New("bid workflow returned an empty bid")
+			}
 
-		if auctionStatus != "LIVE" {
-			return errors.New("auction is not accepting bids")
-		}
+			acceptedBid = bid
+			return nil
+		},
+	)
 
-		workflowRepo := repository.NewAuctionWorkflowRepository(tx)
+	if err != nil {
+		return nil, fmt.Errorf("accept bid workflow: %w", err)
+	}
 
-		if err := workflowRepo.AcceptBid(ctx, params); err != nil {
-			return fmt.Errorf("accept bid: %w", err)
-		}
-
-		return nil
-	})
+	return acceptedBid, nil
 }

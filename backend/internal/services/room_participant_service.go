@@ -36,17 +36,14 @@ func (s *RoomParticipantService) JoinRoom(
 	if err != nil {
 		return nil, fmt.Errorf("get room: %w", err)
 	}
-
 	if room == nil {
 		return nil, errors.New("room not found")
 	}
 
-	if room.Status != "WAITING" {
-		return nil, errors.New("room is not accepting participants")
-	}
-
 	existing, err := s.participantRepo.GetByRoomAndUser(
-		ctx, roomID, userID,
+		ctx,
+		roomID,
+		userID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("check participant: %w", err)
@@ -56,12 +53,16 @@ func (s *RoomParticipantService) JoinRoom(
 		return existing, nil
 	}
 
+	if room.Status != "WAITING" {
+		return nil, errors.New("room is not accepting participants")
+	}
+
 	participants, err := s.participantRepo.GetByRoom(ctx, roomID)
 	if err != nil {
 		return nil, fmt.Errorf("get room participants: %w", err)
 	}
 
-	if len(participants) >= room.MaxParticipants {
+	if len(participants) >= int(room.MaxParticipants) {
 		return nil, errors.New("room is full")
 	}
 
@@ -89,6 +90,9 @@ func (s *RoomParticipantService) GetParticipantByID(
 	participant, err := s.participantRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get participant: %w", err)
+	}
+	if participant == nil {
+		return nil, errors.New("participant not found")
 	}
 
 	return participant, nil
@@ -123,7 +127,21 @@ func (s *RoomParticipantService) UpdateConnectionStatus(
 		return errors.New("invalid connection status")
 	}
 
-	return s.participantRepo.UpdateConnectionStatus(
-		ctx, participantID, status,
-	)
+	participant, err := s.participantRepo.GetByID(ctx, participantID)
+	if err != nil {
+		return fmt.Errorf("get participant: %w", err)
+	}
+	if participant == nil {
+		return errors.New("participant not found")
+	}
+
+	if err := s.participantRepo.UpdateConnectionStatus(
+		ctx,
+		participantID,
+		status,
+	); err != nil {
+		return fmt.Errorf("update connection status: %w", err)
+	}
+
+	return nil
 }

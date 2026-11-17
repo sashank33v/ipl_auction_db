@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
@@ -19,42 +20,67 @@ func NewPlayerService(playerRepo *repository.PlayerRepository) *PlayerService {
 	}
 }
 
-func (s *PlayerService) CreatePlayer(
-	ctx context.Context,
-	player *repository.Player,
-) error {
-	if strings.TrimSpace(player.FullName) == "" {
+func validatePlayer(player *repository.Player) error {
+	if player == nil {
+		return errors.New("player is required")
+	}
+
+	player.FullName = strings.TrimSpace(player.FullName)
+	player.Country = strings.TrimSpace(player.Country)
+	player.Role = strings.ToUpper(strings.TrimSpace(player.Role))
+
+	if player.FullName == "" {
 		return errors.New("player name is required")
 	}
 
-	if strings.TrimSpace(player.Country) == "" {
+	if player.Country == "" {
 		return errors.New("player country is required")
 	}
 
-	if strings.TrimSpace(player.Role) == "" {
+	if player.Role == "" {
 		return errors.New("player role is required")
+	}
+
+	switch player.Role {
+	case "BATSMAN", "BOWLER", "ALL_ROUNDER", "WICKET_KEEPER":
+	default:
+		return errors.New("invalid player role")
 	}
 
 	if player.BasePrice == "" {
 		return errors.New("player base price is required")
 	}
 
-	if player.Role != "BATSMAN" &&
-		player.Role != "BOWLER" &&
-		player.Role != "ALL_ROUNDER" &&
-		player.Role != "WICKET_KEEPER" {
-		return errors.New("invalid player role")
+	basePrice, err := strconv.ParseFloat(player.BasePrice, 64)
+	if err != nil || basePrice <= 0 {
+		return errors.New("player base price must be a positive number")
 	}
 
-	if player.IsOverseas && player.Country == "India" {
-		return errors.New("Indian players cannot be marked as overseas")
-	}
-
-	if !player.IsOverseas && player.Country != "India" {
+	if strings.EqualFold(player.Country, "India") {
+		player.Country = "India"
+		if player.IsOverseas {
+			return errors.New("Indian players cannot be marked as overseas")
+		}
+	} else if !player.IsOverseas {
 		return errors.New("non-Indian players must be marked as overseas")
 	}
 
-	return s.playerRepo.Create(ctx, player)
+	return nil
+}
+
+func (s *PlayerService) CreatePlayer(
+	ctx context.Context,
+	player *repository.Player,
+) error {
+	if err := validatePlayer(player); err != nil {
+		return err
+	}
+
+	if err := s.playerRepo.Create(ctx, player); err != nil {
+		return fmt.Errorf("create player: %w", err)
+	}
+
+	return nil
 }
 
 func (s *PlayerService) GetPlayerByID(
@@ -68,6 +94,9 @@ func (s *PlayerService) GetPlayerByID(
 	player, err := s.playerRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get player: %w", err)
+	}
+	if player == nil {
+		return nil, errors.New("player not found")
 	}
 
 	return player, nil
@@ -88,27 +117,31 @@ func (s *PlayerService) UpdatePlayer(
 	ctx context.Context,
 	player *repository.Player,
 ) error {
+	if player == nil {
+		return errors.New("player is required")
+	}
+
 	if player.ID == "" {
 		return errors.New("player ID is required")
 	}
 
-	if strings.TrimSpace(player.FullName) == "" {
-		return errors.New("player name is required")
+	if err := validatePlayer(player); err != nil {
+		return err
 	}
 
-	if strings.TrimSpace(player.Country) == "" {
-		return errors.New("player country is required")
+	existing, err := s.playerRepo.GetByID(ctx, player.ID)
+	if err != nil {
+		return fmt.Errorf("get player before update: %w", err)
+	}
+	if existing == nil {
+		return errors.New("player not found")
 	}
 
-	if strings.TrimSpace(player.Role) == "" {
-		return errors.New("player role is required")
+	if err := s.playerRepo.Update(ctx, player); err != nil {
+		return fmt.Errorf("update player: %w", err)
 	}
 
-	if player.BasePrice == "" {
-		return errors.New("player base price is required")
-	}
-
-	return s.playerRepo.Update(ctx, player)
+	return nil
 }
 
 func (s *PlayerService) DeletePlayer(
@@ -119,5 +152,17 @@ func (s *PlayerService) DeletePlayer(
 		return errors.New("player ID is required")
 	}
 
-	return s.playerRepo.Delete(ctx, id)
+	existing, err := s.playerRepo.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get player before deletion: %w", err)
+	}
+	if existing == nil {
+		return errors.New("player not found")
+	}
+
+	if err := s.playerRepo.Delete(ctx, id); err != nil {
+		return fmt.Errorf("deactivate player: %w", err)
+	}
+
+	return nil
 }

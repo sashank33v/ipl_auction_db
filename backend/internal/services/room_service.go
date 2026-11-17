@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
 )
@@ -22,6 +24,13 @@ func (s *RoomService) CreateRoom(
 	ctx context.Context,
 	room *repository.Room,
 ) error {
+	if room == nil {
+		return errors.New("room is required")
+	}
+
+	room.HostUserID = strings.TrimSpace(room.HostUserID)
+	room.Name = strings.TrimSpace(room.Name)
+
 	if room.HostUserID == "" {
 		return errors.New("host user ID is required")
 	}
@@ -54,20 +63,31 @@ func (s *RoomService) CreateRoom(
 		room.MinBidIncrement = "0.10"
 	}
 
-	if room.MinSquadSize > room.MaxSquadSize {
-		return errors.New("minimum squad size cannot exceed maximum squad size")
+	startingPurse, err := strconv.ParseFloat(room.StartingPurse, 64)
+	if err != nil || startingPurse <= 0 {
+		return errors.New("starting purse must be a positive number")
+	}
+
+	minBidIncrement, err := strconv.ParseFloat(room.MinBidIncrement, 64)
+	if err != nil || minBidIncrement <= 0 {
+		return errors.New("minimum bid increment must be a positive number")
+	}
+
+	if room.MinSquadSize < 1 ||
+		room.MinSquadSize > room.MaxSquadSize {
+		return errors.New("invalid squad size limits")
 	}
 
 	if room.MaxSquadSize < 18 || room.MaxSquadSize > 25 {
 		return errors.New("maximum squad size must be between 18 and 25")
 	}
 
-	if room.MaxOverseasPlayers > room.MaxSquadSize {
-		return errors.New("overseas player limit cannot exceed maximum squad size")
+	if room.MaxOverseasPlayers < 0 ||
+		room.MaxOverseasPlayers > room.MaxSquadSize {
+		return errors.New("invalid overseas player limit")
 	}
 
-	err := s.roomRepo.Create(ctx, room)
-	if err != nil {
+	if err := s.roomRepo.Create(ctx, room); err != nil {
 		return fmt.Errorf("create room: %w", err)
 	}
 
@@ -86,6 +106,9 @@ func (s *RoomService) GetRoomByID(
 	if err != nil {
 		return nil, fmt.Errorf("get room: %w", err)
 	}
+	if room == nil {
+		return nil, errors.New("room not found")
+	}
 
 	return room, nil
 }
@@ -101,6 +124,9 @@ func (s *RoomService) GetRoomByCode(
 	room, err := s.roomRepo.GetByCode(ctx, code)
 	if err != nil {
 		return nil, fmt.Errorf("get room by code: %w", err)
+	}
+	if room == nil {
+		return nil, errors.New("room not found")
 	}
 
 	return room, nil
@@ -121,16 +147,43 @@ func (s *RoomService) UpdateRoom(
 	ctx context.Context,
 	room *repository.Room,
 ) error {
+	if room == nil {
+		return errors.New("room is required")
+	}
+
 	if room.ID == "" {
 		return errors.New("room ID is required")
 	}
 
+	room.Name = strings.TrimSpace(room.Name)
 	if room.Name == "" {
 		return errors.New("room name is required")
 	}
 
-	err := s.roomRepo.Update(ctx, room)
+	existing, err := s.roomRepo.GetByID(ctx, room.ID)
 	if err != nil {
+		return fmt.Errorf("get room before update: %w", err)
+	}
+	if existing == nil {
+		return errors.New("room not found")
+	}
+
+	if existing.Status != "WAITING" {
+		return errors.New("only waiting rooms can be updated")
+	}
+
+	if room.MaxParticipants != 0 &&
+		(room.MaxParticipants < 4 || room.MaxParticipants > 10) {
+		return errors.New("maximum participants must be between 4 and 10")
+	}
+
+	if room.MinSquadSize != 0 &&
+		room.MaxSquadSize != 0 &&
+		room.MinSquadSize > room.MaxSquadSize {
+		return errors.New("minimum squad size cannot exceed maximum squad size")
+	}
+
+	if err := s.roomRepo.Update(ctx, room); err != nil {
 		return fmt.Errorf("update room: %w", err)
 	}
 
@@ -149,7 +202,6 @@ func (s *RoomService) DeleteRoom(
 	if err != nil {
 		return fmt.Errorf("get room before deletion: %w", err)
 	}
-
 	if room == nil {
 		return errors.New("room not found")
 	}
@@ -158,8 +210,11 @@ func (s *RoomService) DeleteRoom(
 		return errors.New("only waiting rooms can be deleted")
 	}
 
-	err = s.roomRepo.Delete(ctx, id)
-	if err != nil {
+	if _, err := s.roomRepo.GetByID(ctx, id); err != nil {
+		return fmt.Errorf("verify room before deletion: %w", err)
+	}
+
+	if err := s.roomRepo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete room: %w", err)
 	}
 

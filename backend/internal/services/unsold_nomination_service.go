@@ -9,10 +9,11 @@ import (
 )
 
 type UnsoldNominationService struct {
-	nominationRepo *repository.UnsoldNominationRepository
-	auctionRepo    *repository.AuctionRepository
-	teamRepo       *repository.TeamRepository
-	roomPlayerRepo *repository.RoomPlayerRepository
+	nominationRepo  *repository.UnsoldNominationRepository
+	auctionRepo     *repository.AuctionRepository
+	teamRepo        *repository.TeamRepository
+	roomPlayerRepo  *repository.RoomPlayerRepository
+	workflowService *UnsoldNominationWorkflowService
 }
 
 func NewUnsoldNominationService(
@@ -20,12 +21,14 @@ func NewUnsoldNominationService(
 	auctionRepo *repository.AuctionRepository,
 	teamRepo *repository.TeamRepository,
 	roomPlayerRepo *repository.RoomPlayerRepository,
+	workflowService *UnsoldNominationWorkflowService,
 ) *UnsoldNominationService {
 	return &UnsoldNominationService{
-		nominationRepo: nominationRepo,
-		auctionRepo:    auctionRepo,
-		teamRepo:       teamRepo,
-		roomPlayerRepo: roomPlayerRepo,
+		nominationRepo:  nominationRepo,
+		auctionRepo:     auctionRepo,
+		teamRepo:        teamRepo,
+		roomPlayerRepo:  roomPlayerRepo,
+		workflowService: workflowService,
 	}
 }
 
@@ -33,6 +36,10 @@ func (s *UnsoldNominationService) NominatePlayer(
 	ctx context.Context,
 	nomination *repository.UnsoldNomination,
 ) error {
+	if nomination == nil {
+		return errors.New("nomination is required")
+	}
+
 	if nomination.AuctionID == "" ||
 		nomination.RoomPlayerID == "" ||
 		nomination.TeamID == "" {
@@ -51,7 +58,11 @@ func (s *UnsoldNominationService) NominatePlayer(
 		return errors.New("auction not found")
 	}
 
-	if auction.Status != "UNSOLD_ROUND" {
+	if auction.Status != "ACTIVE" {
+		return errors.New("auction is not active")
+	}
+
+	if auction.RoundType != "UNSOLD" {
 		return errors.New("auction is not accepting unsold nominations")
 	}
 
@@ -68,7 +79,8 @@ func (s *UnsoldNominationService) NominatePlayer(
 	}
 
 	roomPlayer, err := s.roomPlayerRepo.GetByID(
-		ctx, nomination.RoomPlayerID,
+		ctx,
+		nomination.RoomPlayerID,
 	)
 	if err != nil {
 		return fmt.Errorf("get room player: %w", err)
@@ -77,8 +89,8 @@ func (s *UnsoldNominationService) NominatePlayer(
 		return errors.New("room player not found")
 	}
 
-	if roomPlayer.RoomID != auction.RoomID ||
-		team.RoomID != auction.RoomID {
+	if team.RoomID != auction.RoomID ||
+		roomPlayer.RoomID != auction.RoomID {
 		return errors.New("nomination belongs to a different room")
 	}
 
@@ -86,27 +98,14 @@ func (s *UnsoldNominationService) NominatePlayer(
 		return errors.New("only unsold players can be nominated")
 	}
 
-	existing, err := s.nominationRepo.GetByTeamAndRound(
-		ctx,
-		nomination.AuctionID,
-		nomination.TeamID,
-		nomination.RoundNumber,
-	)
+	params := repository.CreateNominationParams{
+		AuctionID:    nomination.AuctionID,
+		RoomPlayerID: nomination.RoomPlayerID,
+		TeamID:       nomination.TeamID,
+	}
+
+	_, err = s.workflowService.CreateNomination(ctx, params)
 	if err != nil {
-		return fmt.Errorf("get existing nominations: %w", err)
-	}
-
-	if len(existing) >= 6 {
-		return errors.New("maximum six nominations allowed per team per round")
-	}
-
-	for _, item := range existing {
-		if item.RoomPlayerID == nomination.RoomPlayerID {
-			return errors.New("player already nominated by this team")
-		}
-	}
-
-	if err := s.nominationRepo.Create(ctx, nomination); err != nil {
 		return fmt.Errorf("create nomination: %w", err)
 	}
 
@@ -123,7 +122,9 @@ func (s *UnsoldNominationService) GetNominationsByRound(
 	}
 
 	nominations, err := s.nominationRepo.GetByRound(
-		ctx, auctionID, roundNumber,
+		ctx,
+		auctionID,
+		roundNumber,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get round nominations: %w", err)

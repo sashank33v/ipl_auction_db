@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
@@ -43,6 +44,7 @@ func (s *RoomPlayerService) AddPlayerToRoom(
 	if room == nil {
 		return errors.New("room not found")
 	}
+
 	if room.Status != "WAITING" {
 		return errors.New("cannot add players after auction starts")
 	}
@@ -55,8 +57,15 @@ func (s *RoomPlayerService) AddPlayerToRoom(
 		return errors.New("player not found or inactive")
 	}
 
+	basePrice, err := strconv.ParseFloat(player.BasePrice, 64)
+	if err != nil || basePrice <= 0 {
+		return errors.New("player base price must be positive")
+	}
+
 	existing, err := s.roomPlayerRepo.GetByRoomAndPlayer(
-		ctx, roomID, playerID,
+		ctx,
+		roomID,
+		playerID,
 	)
 	if err != nil {
 		return fmt.Errorf("check room player: %w", err)
@@ -90,6 +99,9 @@ func (s *RoomPlayerService) GetRoomPlayerByID(
 	player, err := s.roomPlayerRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get room player: %w", err)
+	}
+	if player == nil {
+		return nil, errors.New("room player not found")
 	}
 
 	return player, nil
@@ -129,7 +141,9 @@ func (s *RoomPlayerService) GetPlayersByStatus(
 	}
 
 	players, err := s.roomPlayerRepo.GetByRoomAndStatus(
-		ctx, roomID, status,
+		ctx,
+		roomID,
+		status,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get players by status: %w", err)

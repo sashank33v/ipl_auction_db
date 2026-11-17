@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
 )
@@ -24,6 +25,7 @@ func (s *OutboxEventService) GetOutboxEventByID(
 	ctx context.Context,
 	id string,
 ) (*repository.OutboxEvent, error) {
+	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, errors.New("outbox event ID is required")
 	}
@@ -31,6 +33,9 @@ func (s *OutboxEventService) GetOutboxEventByID(
 	event, err := s.outboxRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get outbox event: %w", err)
+	}
+	if event == nil {
+		return nil, errors.New("outbox event not found")
 	}
 
 	return event, nil

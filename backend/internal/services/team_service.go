@@ -27,24 +27,50 @@ func NewTeamService(
 	}
 }
 
+var allowedFranchises = map[string]string{
+	"CSK":  "Chennai Super Kings",
+	"DC":   "Delhi Capitals",
+	"GT":   "Gujarat Titans",
+	"KKR":  "Kolkata Knight Riders",
+	"LSG":  "Lucknow Super Giants",
+	"MI":   "Mumbai Indians",
+	"PBKS": "Punjab Kings",
+	"RR":   "Rajasthan Royals",
+	"RCB":  "Royal Challengers Bengaluru",
+	"SRH":  "Sunrisers Hyderabad",
+}
+
 func (s *TeamService) CreateTeam(
 	ctx context.Context,
 	team *repository.Team,
 ) error {
+	if team == nil {
+		return errors.New("team is required")
+	}
+
 	if team.RoomID == "" || team.ParticipantID == "" {
 		return errors.New("room ID and participant ID are required")
 	}
 
-	if strings.TrimSpace(team.FranchiseCode) == "" ||
-		strings.TrimSpace(team.FranchiseName) == "" {
-		return errors.New("franchise code and name are required")
+	team.FranchiseCode = strings.ToUpper(
+		strings.TrimSpace(team.FranchiseCode),
+	)
+
+	if team.FranchiseCode == "" {
+		return errors.New("franchise code is required")
 	}
+
+	franchiseName, exists := allowedFranchises[team.FranchiseCode]
+	if !exists {
+		return errors.New("invalid franchise code")
+	}
+
+	team.FranchiseName = franchiseName
 
 	room, err := s.roomRepo.GetByID(ctx, team.RoomID)
 	if err != nil {
 		return fmt.Errorf("get room: %w", err)
 	}
-
 	if room == nil {
 		return errors.New("room not found")
 	}
@@ -54,23 +80,24 @@ func (s *TeamService) CreateTeam(
 	}
 
 	participant, err := s.participantRepo.GetByID(
-		ctx, team.ParticipantID,
+		ctx,
+		team.ParticipantID,
 	)
 	if err != nil {
 		return fmt.Errorf("get participant: %w", err)
 	}
-
 	if participant == nil || participant.RoomID != team.RoomID {
 		return errors.New("participant does not belong to this room")
 	}
 
 	existing, err := s.teamRepo.GetByParticipant(
-		ctx, team.RoomID, team.ParticipantID,
+		ctx,
+		team.RoomID,
+		team.ParticipantID,
 	)
 	if err != nil {
 		return fmt.Errorf("check participant team: %w", err)
 	}
-
 	if existing != nil {
 		return errors.New("participant has already selected a team")
 	}
@@ -80,8 +107,14 @@ func (s *TeamService) CreateTeam(
 		return fmt.Errorf("get room teams: %w", err)
 	}
 
-	if len(teams) >= room.MaxParticipants {
+	if len(teams) >= int(room.MaxParticipants) {
 		return errors.New("all team slots are already assigned")
+	}
+
+	for _, existingTeam := range teams {
+		if existingTeam.FranchiseCode == team.FranchiseCode {
+			return errors.New("franchise has already been selected in this room")
+		}
 	}
 
 	team.RemainingPurse = room.StartingPurse
@@ -105,6 +138,9 @@ func (s *TeamService) GetTeamByID(
 	if err != nil {
 		return nil, fmt.Errorf("get team: %w", err)
 	}
+	if team == nil {
+		return nil, errors.New("team not found")
+	}
 
 	return team, nil
 }
@@ -119,7 +155,9 @@ func (s *TeamService) GetTeamByParticipant(
 	}
 
 	team, err := s.teamRepo.GetByParticipant(
-		ctx, roomID, participantID,
+		ctx,
+		roomID,
+		participantID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get participant team: %w", err)

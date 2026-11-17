@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
 )
@@ -29,6 +30,8 @@ func (s *AuctionEventService) GetEventBySequence(
 	auctionID string,
 	sequenceNumber int64,
 ) (*repository.AuctionEvent, error) {
+	auctionID = strings.TrimSpace(auctionID)
+
 	if auctionID == "" || sequenceNumber < 1 {
 		return nil, errors.New("valid auction ID and sequence number are required")
 	}
@@ -42,10 +45,15 @@ func (s *AuctionEventService) GetEventBySequence(
 	}
 
 	event, err := s.eventRepo.GetBySequence(
-		ctx, auctionID, sequenceNumber,
+		ctx,
+		auctionID,
+		sequenceNumber,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get auction event: %w", err)
+	}
+	if event == nil {
+		return nil, errors.New("auction event not found")
 	}
 
 	return event, nil
@@ -56,6 +64,8 @@ func (s *AuctionEventService) GetEventsAfterSequence(
 	auctionID string,
 	sequenceNumber int64,
 ) ([]repository.AuctionEvent, error) {
+	auctionID = strings.TrimSpace(auctionID)
+
 	if auctionID == "" || sequenceNumber < 0 {
 		return nil, errors.New("valid auction ID and sequence number are required")
 	}
@@ -67,9 +77,14 @@ func (s *AuctionEventService) GetEventsAfterSequence(
 	if auction == nil {
 		return nil, errors.New("auction not found")
 	}
+
 	const limit = 100
+
 	events, err := s.eventRepo.GetAfterSequence(
-		ctx, auctionID, sequenceNumber, limit,
+		ctx,
+		auctionID,
+		sequenceNumber,
+		limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get auction events: %w", err)

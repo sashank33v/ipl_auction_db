@@ -77,6 +77,9 @@ func (s *AuctionService) GetAuctionByID(
 	if err != nil {
 		return nil, fmt.Errorf("get auction: %w", err)
 	}
+	if auction == nil {
+		return nil, errors.New("auction not found")
+	}
 
 	return auction, nil
 }

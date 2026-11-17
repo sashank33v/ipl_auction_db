@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
@@ -25,6 +26,13 @@ func (s *SessionService) CreateSession(
 	ctx context.Context,
 	session *repository.Session,
 ) error {
+	if session == nil {
+		return errors.New("session is required")
+	}
+
+	session.UserID = strings.TrimSpace(session.UserID)
+	session.TokenHash = strings.TrimSpace(session.TokenHash)
+
 	if session.UserID == "" {
 		return errors.New("user ID is required")
 	}
@@ -48,6 +56,8 @@ func (s *SessionService) GetSessionByTokenHash(
 	ctx context.Context,
 	tokenHash string,
 ) (*repository.Session, error) {
+	tokenHash = strings.TrimSpace(tokenHash)
+
 	if tokenHash == "" {
 		return nil, errors.New("token hash is required")
 	}
@@ -76,6 +86,8 @@ func (s *SessionService) GetActiveSessionsByUser(
 	ctx context.Context,
 	userID string,
 ) ([]repository.Session, error) {
+	userID = strings.TrimSpace(userID)
+
 	if userID == "" {
 		return nil, errors.New("user ID is required")
 	}
@@ -92,20 +104,32 @@ func (s *SessionService) UpdateLastUsed(
 	ctx context.Context,
 	sessionID string,
 ) error {
+	sessionID = strings.TrimSpace(sessionID)
+
 	if sessionID == "" {
 		return errors.New("session ID is required")
 	}
 
-	return s.sessionRepo.UpdateLastUsed(ctx, sessionID)
+	if err := s.sessionRepo.UpdateLastUsed(ctx, sessionID); err != nil {
+		return fmt.Errorf("update session last used: %w", err)
+	}
+
+	return nil
 }
 
 func (s *SessionService) RevokeSession(
 	ctx context.Context,
 	sessionID string,
 ) error {
+	sessionID = strings.TrimSpace(sessionID)
+
 	if sessionID == "" {
 		return errors.New("session ID is required")
 	}
 
-	return s.sessionRepo.Revoke(ctx, sessionID)
+	if err := s.sessionRepo.Revoke(ctx, sessionID); err != nil {
+		return fmt.Errorf("revoke session: %w", err)
+	}
+
+	return nil
 }

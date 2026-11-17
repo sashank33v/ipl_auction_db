@@ -10,6 +10,7 @@ import (
 type UserRepository struct {
 	db DBTX
 }
+
 type User struct {
 	ID           string `json:"id"`
 	Username     string `json:"username"`
@@ -22,6 +23,7 @@ func NewUserRepository(db DBTX) *UserRepository {
 		db: db,
 	}
 }
+
 func (r *UserRepository) Create(ctx context.Context, user *User) error {
 	query := `
 		INSERT INTO users (username, email, password_hash)
@@ -44,7 +46,10 @@ func (r *UserRepository) Create(ctx context.Context, user *User) error {
 	return nil
 }
 
-func (r *UserRepository) GetByID(ctx context.Context, id string) (*User, error) {
+func (r *UserRepository) GetByID(
+	ctx context.Context,
+	id string,
+) (*User, error) {
 	query := `
 		SELECT id, username, email, password_hash
 		FROM users
@@ -65,6 +70,35 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*User, error) 
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	return user, nil
+}
+
+func (r *UserRepository) GetByEmail(
+	ctx context.Context,
+	email string,
+) (*User, error) {
+	query := `
+		SELECT id, username, email, password_hash
+		FROM users
+		WHERE LOWER(email) = LOWER($1)
+	`
+
+	user := &User{}
+
+	err := r.db.QueryRow(ctx, query, email).Scan(
+		&user.ID,
+		&user.Username,
+		&user.Email,
+		&user.PasswordHash,
+	)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get user by email: %w", err)
 	}
 
 	return user, nil
