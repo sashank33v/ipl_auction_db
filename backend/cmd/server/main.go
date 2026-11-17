@@ -13,6 +13,9 @@ import (
 	"github.com/sashank33v/ipl_auction_db/backend/internal/api"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/config"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/database"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/handlers"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/services"
 )
 
 func main() {
@@ -26,8 +29,15 @@ func main() {
 		log.Fatalf("Database connection error: %v", err)
 	}
 	defer db.Close()
+	userRepo := repository.NewUserRepository(db)
+	sessionRepo := repository.NewSessionRepository(db)
+	userService := services.NewUserService(userRepo)
+	sessionService := services.NewSessionService(sessionRepo)
 
-	router := api.NewRouter(cfg.FrontendURL)
+	authHandler := handlers.NewAuthHandler(userService, sessionService)
+	meHandler := handlers.NewMeHandler(userService)
+
+	router := api.NewRouter(cfg.FrontendURL, authHandler, meHandler, sessionService)
 
 	server := &http.Server{
 		Addr:    ":" + cfg.ServerPort,
