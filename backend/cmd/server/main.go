@@ -29,15 +29,57 @@ func main() {
 		log.Fatalf("Database connection error: %v", err)
 	}
 	defer db.Close()
+
+	txManager := database.NewTransactionManager(db)
+
 	userRepo := repository.NewUserRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
+	roomRepo := repository.NewRoomRepository(db)
+	participantRepo := repository.NewRoomParticipantRepository(db)
+	teamRepo := repository.NewTeamRepository(db)
+	playerRepo := repository.NewPlayerRepository(db)
+	roomPlayerRepo := repository.NewRoomPlayerRepository(db)
+	auctionRepo := repository.NewAuctionRepository(db)
+	bidRepo := repository.NewBidRepository(db)
+	squadRepo := repository.NewSquadRepository(db)
+	nominationRepo := repository.NewUnsoldNominationRepository(db)
+	eventRepo := repository.NewAuctionEventRepository(db)
+
+	nominationWorkflowService := services.NewUnsoldNominationWorkflowService(txManager)
 	userService := services.NewUserService(userRepo)
 	sessionService := services.NewSessionService(sessionRepo)
+	roomService := services.NewRoomService(roomRepo)
+
+	participantService := services.NewRoomParticipantService(participantRepo, roomRepo)
+
+	teamService := services.NewTeamService(
+		teamRepo,
+		roomRepo,
+		participantRepo,
+	)
+
+	playerService := services.NewPlayerService(playerRepo)
+	roomPlayerService := services.NewRoomPlayerService(roomPlayerRepo, roomRepo, playerRepo)
+	auctionService := services.NewAuctionService(auctionRepo, roomRepo)
+	bidService := services.NewBidService(bidRepo, auctionRepo)
+	squadService := services.NewSquadService(squadRepo, teamRepo)
+	nominationService := services.NewUnsoldNominationService(nominationRepo, auctionRepo, teamRepo, roomPlayerRepo, nominationWorkflowService)
+	eventService := services.NewAuctionEventService(eventRepo, auctionRepo)
 
 	authHandler := handlers.NewAuthHandler(userService, sessionService)
 	meHandler := handlers.NewMeHandler(userService)
+	roomHandler := handlers.NewRoomHandler(roomService)
+	participantHandler := handlers.NewRoomParticipantHandler(participantService)
+	teamHandler := handlers.NewTeamHandler(teamService, participantService)
+	playerHandler := handlers.NewPlayerHandler(playerService)
+	roomPlayerHandler := handlers.NewRoomPlayerHandler(roomPlayerService, participantService, roomService)
+	auctionHandler := handlers.NewAuctionHandler(auctionService, participantService, roomService)
+	bidHandler := handlers.NewBidHandler(bidService, auctionService, participantService)
+	squadHandler := handlers.NewSquadHandler(squadService, teamService, participantService)
+	nominationHandler := handlers.NewUnsoldNominationHandler(nominationService, auctionService, participantService)
+	eventHandler := handlers.NewAuctionEventHandler(eventService, auctionService, participantService)
 
-	router := api.NewRouter(cfg.FrontendURL, authHandler, meHandler, sessionService)
+	router := api.NewRouter(cfg.FrontendURL, authHandler, meHandler, roomHandler, participantHandler, teamHandler, playerHandler, roomPlayerHandler, auctionHandler, bidHandler, squadHandler, nominationHandler, eventHandler, sessionService)
 
 	server := &http.Server{
 		Addr:    ":" + cfg.ServerPort,

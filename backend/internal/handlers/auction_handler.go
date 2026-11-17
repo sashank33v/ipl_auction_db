@@ -61,7 +61,7 @@ func (h *AuctionHandler) GetAuctionByRoom(
 	}
 
 	if !isMember {
-		http.Error(w, "You are not a member of this room", http.StatusForbidden)
+		http.Error(w, "You are not a member of this room", http.StatusNotFound)
 		return
 	}
 
