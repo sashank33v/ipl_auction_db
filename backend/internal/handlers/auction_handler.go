@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"net/http"
 	"strings"
 
@@ -174,6 +175,7 @@ func (h *AuctionHandler) CreateAuction(
 		roomID,
 	)
 	if err != nil {
+		log.Printf("CreateAuction failed for room %s: %v", roomID, err)
 		if strings.Contains(err.Error(), "already exists") ||
 			strings.Contains(err.Error(), "waiting rooms") {
 			http.Error(w, err.Error(), http.StatusConflict)
@@ -185,4 +187,42 @@ func (h *AuctionHandler) CreateAuction(
 	}
 
 	writeJSON(w, http.StatusCreated, auction)
+}
+func (h *AuctionHandler) StartAuction(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok || userID == "" {
+		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		return
+	}
+
+	roomID := chi.URLParam(r, "roomID")
+	if roomID == "" {
+		http.Error(w, "Room ID is required", http.StatusBadRequest)
+		return
+	}
+
+	auction, err := h.auctionService.StartAuction(
+		r.Context(),
+		roomID,
+		userID,
+	)
+	if err != nil {
+		switch {
+		case strings.Contains(err.Error(), "not found"):
+			http.Error(w, err.Error(), http.StatusNotFound)
+		case strings.Contains(err.Error(), "only room host"):
+			http.Error(w, err.Error(), http.StatusForbidden)
+		case strings.Contains(err.Error(), "minimum"),
+			strings.Contains(err.Error(), "waiting state"):
+			http.Error(w, err.Error(), http.StatusConflict)
+		default:
+			http.Error(w, "Failed to start auction", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, auction)
 }

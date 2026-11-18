@@ -159,3 +159,28 @@ func (r *AuctionRepository) UpdateStatus(
 
 	return nil
 }
+func (r *AuctionRepository) StartAuction(
+	ctx context.Context,
+	auctionID string,
+) error {
+	query := `
+        UPDATE auctions
+        SET
+            status = 'ACTIVE',
+            started_at = NOW(),
+            updated_at = NOW()
+        WHERE id = $1
+          AND status = 'WAITING'
+    `
+
+	tag, err := r.db.Exec(ctx, query, auctionID)
+	if err != nil {
+		return fmt.Errorf("failed to start auction: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("auction not found or not in waiting state")
+	}
+
+	return nil
+}

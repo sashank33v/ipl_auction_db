@@ -65,6 +65,7 @@ func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler 
 			r.Get("/{roomID}/auction", auctionHandler.GetAuctionByRoom)
 
 			r.Get("/{roomID}/squads", squadHandler.GetSquadsByRoom)
+			r.Post("/{roomID}/auction/start", auctionHandler.StartAuction)
 		})
 
 		r.Route("/participants", func(r chi.Router) {
@@ -96,7 +97,10 @@ func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler 
 		r.Route("/auctions", func(r chi.Router) {
 			r.Get("/{id}", auctionHandler.GetAuctionByID)
 
+			r.Post("/{roomID}", auctionHandler.CreateAuction)
+
 			r.Get("/{auctionID}/bids", bidHandler.GetAuctionBids)
+			r.Post("/{auctionID}/bids", bidHandler.PlaceBid)
 			r.Get(
 				"/{auctionID}/bids/request/{requestID}",
 				bidHandler.GetBidByRequestID,
@@ -120,7 +124,6 @@ func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler 
 				eventHandler.GetEventsAfterSequence,
 			)
 		})
-
 		r.Get("/bids/{id}", bidHandler.GetBidByID)
 
 		r.Route("/squads", func(r chi.Router) {

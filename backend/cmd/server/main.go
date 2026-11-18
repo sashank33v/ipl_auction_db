@@ -31,7 +31,7 @@ func main() {
 	defer db.Close()
 
 	txManager := database.NewTransactionManager(db)
-
+	bidWorkflowService := services.NewBidWorkflowService(txManager)
 	userRepo := repository.NewUserRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
 	roomRepo := repository.NewRoomRepository(db)
@@ -49,18 +49,11 @@ func main() {
 	userService := services.NewUserService(userRepo)
 	sessionService := services.NewSessionService(sessionRepo)
 	roomService := services.NewRoomService(roomRepo)
-
 	participantService := services.NewRoomParticipantService(participantRepo, roomRepo)
-
-	teamService := services.NewTeamService(
-		teamRepo,
-		roomRepo,
-		participantRepo,
-	)
-
+	teamService := services.NewTeamService(teamRepo, roomRepo, participantRepo)
 	playerService := services.NewPlayerService(playerRepo)
 	roomPlayerService := services.NewRoomPlayerService(roomPlayerRepo, roomRepo, playerRepo)
-	auctionService := services.NewAuctionService(auctionRepo, roomRepo)
+	auctionService := services.NewAuctionService(auctionRepo, roomRepo, participantService, teamService)
 	bidService := services.NewBidService(bidRepo, auctionRepo)
 	squadService := services.NewSquadService(squadRepo, teamRepo)
 	nominationService := services.NewUnsoldNominationService(nominationRepo, auctionRepo, teamRepo, roomPlayerRepo, nominationWorkflowService)
@@ -74,7 +67,7 @@ func main() {
 	playerHandler := handlers.NewPlayerHandler(playerService)
 	roomPlayerHandler := handlers.NewRoomPlayerHandler(roomPlayerService, participantService, roomService)
 	auctionHandler := handlers.NewAuctionHandler(auctionService, participantService, roomService)
-	bidHandler := handlers.NewBidHandler(bidService, auctionService, participantService)
+	bidHandler := handlers.NewBidHandler(bidService, auctionService, participantService, teamService, bidWorkflowService)
 	squadHandler := handlers.NewSquadHandler(squadService, teamService, participantService)
 	nominationHandler := handlers.NewUnsoldNominationHandler(nominationService, auctionService, participantService)
 	eventHandler := handlers.NewAuctionEventHandler(eventService, auctionService, participantService)
