@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -95,6 +96,7 @@ func (h *PlayerHandler) GetAllPlayers(
 ) {
 	players, err := h.playerService.GetAllPlayers(r.Context())
 	if err != nil {
+		log.Printf("GetAllPlayers failed: %+v", err)
 		http.Error(w, "Failed to retrieve players", http.StatusInternalServerError)
 		return
 	}

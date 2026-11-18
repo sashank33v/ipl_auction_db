@@ -57,9 +57,9 @@ func (r *PlayerRepository) Create(ctx context.Context, player *Player) error {
 func (r *PlayerRepository) GetByID(ctx context.Context, id string) (*Player, error) {
 	query := `
 		SELECT id, full_name, country, role, is_overseas,
-		       base_price, profile_image_url, is_active
-		FROM players
-		WHERE id = $1
+       base_price,
+       COALESCE(profile_image_url, '') AS profile_image_url,
+       is_active FROM players WHERE id = $1
 	`
 
 	player := &Player{}
@@ -86,13 +86,7 @@ func (r *PlayerRepository) GetByID(ctx context.Context, id string) (*Player, err
 }
 
 func (r *PlayerRepository) GetAll(ctx context.Context) ([]Player, error) {
-	query := `
-		SELECT id, full_name, country, role, is_overseas,
-		       base_price, profile_image_url, is_active
-		FROM players
-		WHERE is_active = TRUE
-		ORDER BY full_name
-	`
+	query := `SELECT id, full_name, country, role, is_overseas, base_price, COALESCE(profile_image_url, '') AS profile_image_url, is_active FROM players ORDER BY full_name`
 
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {

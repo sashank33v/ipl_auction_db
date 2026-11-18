@@ -12,7 +12,7 @@ import (
 	"github.com/sashank33v/ipl_auction_db/backend/internal/services"
 )
 
-func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler *handlers.MeHandler, roomHandler *handlers.RoomHandler, participantHandler *handlers.RoomParticipantHandler, teamHandler *handlers.TeamHandler, playerHandler *handlers.PlayerHandler, roomPlayerHandler *handlers.RoomPlayerHandler, auctionHandler *handlers.AuctionHandler, bidHandler *handlers.BidHandler, squadHandler *handlers.SquadHandler, nominationHandler *handlers.UnsoldNominationHandler, eventHandler *handlers.AuctionEventHandler, sessionService *services.SessionService) http.Handler {
+func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler *handlers.MeHandler, roomHandler *handlers.RoomHandler, participantHandler *handlers.RoomParticipantHandler, teamHandler *handlers.TeamHandler, playerHandler *handlers.PlayerHandler, roomPlayerHandler *handlers.RoomPlayerHandler, auctionHandler *handlers.AuctionHandler, bidHandler *handlers.BidHandler, squadHandler *handlers.SquadHandler, nominationHandler *handlers.UnsoldNominationHandler, mainNominationHandler *handlers.MainNominationHandler, eventHandler *handlers.AuctionEventHandler, sessionService *services.SessionService) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimiddleware.RequestID)
@@ -122,6 +122,10 @@ func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler 
 			r.Get(
 				"/{auctionID}/events",
 				eventHandler.GetEventsAfterSequence,
+			)
+			r.Post(
+				"/{auctionID}/nominate",
+				mainNominationHandler.NominatePlayer,
 			)
 		})
 		r.Get("/bids/{id}", bidHandler.GetBidByID)

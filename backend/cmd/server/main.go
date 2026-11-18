@@ -58,6 +58,7 @@ func main() {
 	squadService := services.NewSquadService(squadRepo, teamRepo)
 	nominationService := services.NewUnsoldNominationService(nominationRepo, auctionRepo, teamRepo, roomPlayerRepo, nominationWorkflowService)
 	eventService := services.NewAuctionEventService(eventRepo, auctionRepo)
+	mainNominationWorkflowService := services.NewMainNominationWorkflowService(txManager)
 
 	authHandler := handlers.NewAuthHandler(userService, sessionService)
 	meHandler := handlers.NewMeHandler(userService)
@@ -71,8 +72,9 @@ func main() {
 	squadHandler := handlers.NewSquadHandler(squadService, teamService, participantService)
 	nominationHandler := handlers.NewUnsoldNominationHandler(nominationService, auctionService, participantService)
 	eventHandler := handlers.NewAuctionEventHandler(eventService, auctionService, participantService)
+	mainNominationHandler := handlers.NewMainNominationHandler(mainNominationWorkflowService)
 
-	router := api.NewRouter(cfg.FrontendURL, authHandler, meHandler, roomHandler, participantHandler, teamHandler, playerHandler, roomPlayerHandler, auctionHandler, bidHandler, squadHandler, nominationHandler, eventHandler, sessionService)
+	router := api.NewRouter(cfg.FrontendURL, authHandler, meHandler, roomHandler, participantHandler, teamHandler, playerHandler, roomPlayerHandler, auctionHandler, bidHandler, squadHandler, nominationHandler, mainNominationHandler, eventHandler, sessionService)
 
 	server := &http.Server{
 		Addr:    ":" + cfg.ServerPort,
