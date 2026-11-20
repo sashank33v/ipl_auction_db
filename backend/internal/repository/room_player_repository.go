@@ -12,6 +12,7 @@ type RoomPlayer struct {
 	ID        string    `json:"id"`
 	RoomID    string    `json:"room_id"`
 	PlayerID  string    `json:"player_id"`
+	FullName  string    `json:"full_name"`
 	BasePrice string    `json:"base_price"`
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
@@ -143,11 +144,19 @@ func (r *RoomPlayerRepository) GetByRoom(
 	roomID string,
 ) ([]RoomPlayer, error) {
 	query := `
-		SELECT id, room_id, player_id, base_price,
-		       status, created_at, updated_at
-		FROM room_players
-		WHERE room_id = $1
-		ORDER BY created_at
+		SELECT
+    rp.id,
+    rp.room_id,
+    rp.player_id,
+    p.full_name,
+    rp.base_price,
+    rp.status,
+    rp.created_at,
+    rp.updated_at
+FROM room_players rp
+JOIN players p ON p.id = rp.player_id
+WHERE rp.room_id = $1
+ORDER BY p.full_name ASC
 	`
 
 	return r.getPlayers(ctx, query, roomID)
@@ -159,11 +168,20 @@ func (r *RoomPlayerRepository) GetByRoomAndStatus(
 	status string,
 ) ([]RoomPlayer, error) {
 	query := `
-		SELECT id, room_id, player_id, base_price,
-		       status, created_at, updated_at
-		FROM room_players
-		WHERE room_id = $1 AND status = $2
-		ORDER BY created_at
+		SELECT
+    rp.id,
+    rp.room_id,
+    rp.player_id,
+    p.full_name,
+    rp.base_price,
+    rp.status,
+    rp.created_at,
+    rp.updated_at
+FROM room_players rp
+JOIN players p ON p.id = rp.player_id
+WHERE rp.room_id = $1
+		WHERE rp.room_id = $1 AND rp.status = $2
+		ORDER BY rp.auction_sequence ASC
 	`
 
 	return r.getPlayers(ctx, query, roomID, status)
@@ -189,6 +207,7 @@ func (r *RoomPlayerRepository) getPlayers(
 			&player.ID,
 			&player.RoomID,
 			&player.PlayerID,
+			&player.FullName,
 			&player.BasePrice,
 			&player.Status,
 			&player.CreatedAt,

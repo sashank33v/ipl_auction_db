@@ -264,3 +264,60 @@ func (h *RoomPlayerHandler) GetPlayersByStatus(
 
 	writeJSON(w, http.StatusOK, players)
 }
+func (h *RoomPlayerHandler) GetAvailablePlayersByCategory(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok || userID == "" {
+		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		return
+	}
+
+	roomID := chi.URLParam(r, "roomID")
+	category := chi.URLParam(r, "category")
+
+	if roomID == "" || category == "" {
+		http.Error(w, "Room ID and category are required", http.StatusBadRequest)
+		return
+	}
+
+	participants, err := h.participantService.GetRoomParticipants(
+		r.Context(),
+		roomID,
+	)
+	if err != nil {
+		http.Error(w, "Failed to retrieve room participants", http.StatusInternalServerError)
+		return
+	}
+
+	isMember := false
+	for _, participant := range participants {
+		if participant.UserID == userID {
+			isMember = true
+			break
+		}
+	}
+
+	if !isMember {
+		http.Error(w, "You are not a member of this room", http.StatusForbidden)
+		return
+	}
+
+	players, err := h.roomPlayerService.GetAvailablePlayersByCategory(
+		r.Context(),
+		roomID,
+		category,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "invalid auction category") {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		http.Error(w, "Failed to retrieve players", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, players)
+}

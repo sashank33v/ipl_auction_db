@@ -60,6 +60,10 @@ func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler 
 				"/{roomID}/players/status/{status}",
 				roomPlayerHandler.GetPlayersByStatus,
 			)
+			r.Get(
+				"/{roomID}/players/category/{category}",
+				roomPlayerHandler.GetAvailablePlayersByCategory,
+			)
 
 			r.Post("/{roomID}/auction", auctionHandler.CreateAuction)
 			r.Get("/{roomID}/auction", auctionHandler.GetAuctionByRoom)
