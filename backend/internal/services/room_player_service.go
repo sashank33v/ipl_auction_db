@@ -151,3 +151,58 @@ func (s *RoomPlayerService) GetPlayersByStatus(
 
 	return players, nil
 }
+
+func (s *RoomPlayerService) GetAvailablePlayersByCategory(
+	ctx context.Context,
+	roomID string,
+	category string,
+) ([]repository.RoomPlayerQueueItem, error) {
+
+	if roomID == "" {
+		return nil, errors.New("room ID is required")
+	}
+
+	category = strings.ToUpper(strings.TrimSpace(category))
+
+	switch category {
+	case "MARQUEE",
+		"CAPPED_BATTER",
+		"CAPPED_BOWLER",
+		"CAPPED_ALL_ROUNDER",
+		"CAPPED_WICKETKEEPER",
+		"UNCAPPED_BATTER",
+		"UNCAPPED_BOWLER",
+		"UNCAPPED_ALL_ROUNDER",
+		"UNCAPPED_WICKETKEEPER",
+		"ASSOCIATE_ALL_ROUNDER",
+		"REFERENCE_BATTER",
+		"REFERENCE_BOWLER",
+		"REFERENCE_ALL_ROUNDER",
+		"REFERENCE_WICKETKEEPER":
+	default:
+		return nil, errors.New("invalid auction category")
+	}
+
+	room, err := s.roomRepo.GetByID(ctx, roomID)
+	if err != nil {
+		return nil, fmt.Errorf("get room: %w", err)
+	}
+
+	if room == nil {
+		return nil, errors.New("room not found")
+	}
+
+	players, err := s.roomPlayerRepo.GetAvailablePlayersByCategory(
+		ctx,
+		roomID,
+		category,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"get available players by category: %w",
+			err,
+		)
+	}
+
+	return players, nil
+}

@@ -17,7 +17,20 @@ type RoomPlayer struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
-
+type RoomPlayerQueueItem struct {
+	RoomPlayerID    string `json:"room_player_id"`
+	RoomID          string `json:"room_id"`
+	PlayerID        string `json:"player_id"`
+	FullName        string `json:"full_name"`
+	Country         string `json:"country"`
+	Role            string `json:"role"`
+	IsOverseas      bool   `json:"is_overseas"`
+	BasePrice       string `json:"base_price"`
+	AuctionCategory string `json:"auction_category"`
+	Status          string `json:"status"`
+	AuctionSequence int    `json:"auction_sequence"`
+	ProfileImageURL string `json:"profile_image_url"`
+}
 type RoomPlayerRepository struct {
 	db DBTX
 }
@@ -216,4 +229,82 @@ func (r *RoomPlayerRepository) UpdateStatus(
 	}
 
 	return nil
+}
+
+func (r *RoomPlayerRepository) GetAvailablePlayersByCategory(
+	ctx context.Context,
+	roomID string,
+	category string,
+) ([]RoomPlayerQueueItem, error) {
+
+	query := `
+        SELECT
+            rp.id,
+            rp.room_id,
+            rp.player_id,
+            p.full_name,
+            p.country,
+            p.role,
+            p.is_overseas,
+            rp.base_price,
+            p.auction_category,
+            rp.status,
+            rp.auction_sequence,
+            COALESCE(p.profile_image_url, '')
+        FROM room_players rp
+        JOIN players p ON p.id = rp.player_id
+        WHERE rp.room_id = $1
+          AND p.auction_category = $2
+          AND p.is_auction_eligible = TRUE
+          AND p.is_active = TRUE
+          AND rp.status = 'AVAILABLE'
+        ORDER BY rp.auction_sequence ASC
+    `
+
+	rows, err := r.db.Query(ctx, query, roomID, category)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to get available players by category: %w",
+			err,
+		)
+	}
+	defer rows.Close()
+
+	players := make([]RoomPlayerQueueItem, 0)
+
+	for rows.Next() {
+		var player RoomPlayerQueueItem
+
+		err := rows.Scan(
+			&player.RoomPlayerID,
+			&player.RoomID,
+			&player.PlayerID,
+			&player.FullName,
+			&player.Country,
+			&player.Role,
+			&player.IsOverseas,
+			&player.BasePrice,
+			&player.AuctionCategory,
+			&player.Status,
+			&player.AuctionSequence,
+			&player.ProfileImageURL,
+		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to scan category player: %w",
+				err,
+			)
+		}
+
+		players = append(players, player)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf(
+			"failed to iterate category players: %w",
+			err,
+		)
+	}
+
+	return players, nil
 }
