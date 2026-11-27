@@ -27,6 +27,7 @@ type RealtimeHandler struct {
 	repo        *repository.RealtimeRepository
 	sessions    *services.SessionService
 	bids        *BidHandler
+	auctions    *services.AuctionService
 	upgrader    websocket.Upgrader
 	mu          sync.Mutex
 	connections map[string]*liveConnection
@@ -34,8 +35,8 @@ type RealtimeHandler struct {
 	closed      bool
 }
 
-func NewRealtimeHandler(ctx context.Context, repo *repository.RealtimeRepository, sessions *services.SessionService, bids *BidHandler, origin string) *RealtimeHandler {
-	return &RealtimeHandler{ctx: ctx, repo: repo, sessions: sessions, bids: bids, connections: make(map[string]*liveConnection), upgrader: websocket.Upgrader{HandshakeTimeout: 5 * time.Second, CheckOrigin: func(r *http.Request) bool { return allowedSocketOrigin(r.Header.Values("Origin"), origin) }}}
+func NewRealtimeHandler(ctx context.Context, repo *repository.RealtimeRepository, sessions *services.SessionService, bids *BidHandler, auctions *services.AuctionService, origin string) *RealtimeHandler {
+	return &RealtimeHandler{ctx: ctx, repo: repo, sessions: sessions, bids: bids, auctions: auctions, connections: make(map[string]*liveConnection), upgrader: websocket.Upgrader{HandshakeTimeout: 5 * time.Second, CheckOrigin: func(r *http.Request) bool { return allowedSocketOrigin(r.Header.Values("Origin"), origin) }}}
 }
 func allowedSocketOrigin(values []string, expected string) bool {
 	return len(values) == 0 || (len(values) == 1 && expected != "" && values[0] == expected)
@@ -253,6 +254,33 @@ func (h *RealtimeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			switch message.Type {
 			case "REQUEST_SNAPSHOT":
 				if !pull(true, true) {
+					return
+				}
+			case "HOST_PAUSE", "HOST_RESUME":
+				// Controls have no client-supplied identity, state or timer.
+				if len(message.Payload) != 0 {
+					var empty struct{}
+					if strictJSON(message.Payload, &empty) != nil {
+						if send("ERROR", map[string]any{"status": 400, "message": "Control payload must be empty"}, nil, "", time.Now().UTC()) != nil {
+							return
+						}
+						continue
+					}
+				}
+				cmdCtx, stop := context.WithTimeout(ctx, 3*time.Second)
+				state, e := h.auctions.SetPaused(cmdCtx, auctionID, user, message.Type == "HOST_PAUSE")
+				stop()
+				if e != nil {
+					status, detail := controlError(e)
+					if send("ERROR", map[string]any{"command": message.Type, "status": status, "message": detail}, nil, "", time.Now().UTC()) != nil {
+						return
+					}
+					continue
+				}
+				if send("CONTROL_RESULT", map[string]any{"command": message.Type, "accepted": true, "auction": state}, nil, "", time.Now().UTC()) != nil {
+					return
+				}
+				if !pull(false, false) {
 					return
 				}
 			case "BID_PLACE":

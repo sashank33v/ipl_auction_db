@@ -80,7 +80,7 @@ func main() {
 	eventHandler := handlers.NewAuctionEventHandler(eventService, auctionService, participantService)
 	mainNominationHandler := handlers.NewMainNominationHandler(mainNominationWorkflowService)
 
-	realtimeHandler := handlers.NewRealtimeHandler(ctx, repository.NewRealtimeRepository(db), sessionService, bidHandler, cfg.FrontendURL)
+	realtimeHandler := handlers.NewRealtimeHandler(ctx, repository.NewRealtimeRepository(db), sessionService, bidHandler, auctionService, cfg.FrontendURL)
 	router := api.NewRouter(cfg.FrontendURL, authHandler, meHandler, roomHandler, participantHandler, teamHandler, playerHandler, roomPlayerHandler, auctionHandler, bidHandler, squadHandler, nominationHandler, mainNominationHandler, eventHandler, sessionService, userService, realtimeHandler)
 
 	server := &http.Server{

@@ -1293,3 +1293,11 @@ project.
 
 **IPL Auction Arena --- Private rooms. Live bidding. One authoritative
 auction.**
+
+## Milestone 5A — Host pause and resume (MAIN round)
+
+- Host-only `POST /auctions/{auctionID}/pause` and `POST /auctions/{auctionID}/resume` return the updated auction. No request body is needed. Socket commands `{"type":"HOST_PAUSE"}` and `{"type":"HOST_RESUME"}` use the same service; optional empty payload, `CONTROL_RESULT` on success, `ERROR` with HTTP-style status on failure.
+- Commands require authenticated room host membership, IN_PROGRESS room and MAIN round; pause requires ACTIVE and resume requires PAUSED. Non-host gets 403, wrong state or expired current deadline gets 409, missing auction 404, invalid UUID 400, unavailable actor 503. Recovery still uses `/recover/resume`.
+- While paused the persisted `paused_at` freezes the clock: remaining = `timer_deadline_at - paused_at`, not deadline minus current server time. No new bids or timer transitions while PAUSED; exact replay of an already accepted bid remains idempotent. Resume shifts both timer timestamps by elapsed pause duration, preserving the current player and leading bid. Idle resume starts a fresh 3-second transition interval. Intentional PAUSED survives restart; ACTIVE still enters RECOVERING. Explicit pause only, no automatic host-disconnect pause.
+- Committed `AUCTION_PAUSED` and `AUCTION_RESUMED` events/outbox rows use reason `host_control`; existing WebSocket polling broadcasts them and the authoritative snapshot. Host REST authentication does not require a simultaneous WebSocket connection; presence enforcement remains deferred.
+- Run `BASE="$BASE" AUCTION_ID="$AUCTION_ID" TEST_DIR="$TEST_DIR" bash scripts/smoke_host_controls.sh no-bid` (or `with-bid`, which places a real test bid). Use a test auction with no competing bidders and existing test session cookie jars. Keep observer sockets connected to verify both control events. The script checks rejected non-host control, paused bids, unchanged state for 17 seconds and exact remaining time on resume. If interrupted, the auction may remain paused; inspect and resume explicitly. No migration/dependency changes.

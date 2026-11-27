@@ -142,6 +142,8 @@ func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler 
 			)
 			// Main queue nominations are now server-driven.
 			r.Post("/{auctionID}/recover/resume", auctionHandler.ResumeRecoveredAuction)
+			r.Post("/{auctionID}/pause", auctionHandler.PauseAuction)
+			r.Post("/{auctionID}/resume", auctionHandler.ResumeAuction)
 		})
 		r.Get("/bids/{id}", bidHandler.GetBidByID)
 

@@ -273,8 +273,52 @@ func TestLobbyLifecycleIntegration(t *testing.T) {
 		t.Fatal("wrong first nomination")
 	}
 	checkWindow(15 * time.Second)
+	// Normal host pause preserves the current player and remaining clock.
+	if _, err := as.SetPaused(ctx, started.ID, outsider, true); !errors.Is(err, repository.ErrControlHostOnly) {
+		t.Fatalf("outsider pause: %v", err)
+	}
+	for _, member := range members {
+		if member.UserID != users[0] {
+			if _, err := as.SetPaused(ctx, started.ID, member.UserID, true); !errors.Is(err, repository.ErrControlHostOnly) {
+				t.Fatalf("member pause: %v", err)
+			}
+			break
+		}
+	}
+	paused, err := as.SetPaused(ctx, started.ID, users[0], true)
+	if err != nil || paused.Status != "PAUSED" || paused.PausedAt == nil || paused.TimerDeadlineAt == nil || paused.CurrentPlayerID == nil || *paused.CurrentPlayerID != preview[0].ID {
+		t.Fatalf("pause: %+v %v", paused, err)
+	}
+	if _, err := as.SetPaused(ctx, started.ID, users[0], true); !errors.Is(err, repository.ErrControlConflict) {
+		t.Fatalf("repeated pause: %v", err)
+	}
+	if _, err := as.SetPaused(ctx, started.ID, outsider, false); !errors.Is(err, repository.ErrControlHostOnly) {
+		t.Fatalf("outsider resume: %v", err)
+	}
+	// Simulate a long pause: move both retained timer timestamps and paused_at
+	// back together so the original deadline is now in the past.
+	changeTime(`UPDATE auctions SET paused_at=paused_at-INTERVAL '20 seconds',timer_started_at=timer_started_at-INTERVAL '20 seconds',timer_deadline_at=timer_deadline_at-INTERVAL '20 seconds' WHERE id=$1`)
+	advance("")
+	if a := read(); a.Status != "PAUSED" || a.CurrentPlayerID == nil || *a.CurrentPlayerID != preview[0].ID {
+		t.Fatal("engine advanced during pause")
+	}
+	// Intentional pauses survive a server restart, unlike ACTIVE auctions.
+	if _, err := engine.RecoverOnStartup(ctx); err != nil || read().Status != "PAUSED" {
+		t.Fatalf("paused restart: %v", err)
+	}
+	resumed, err := as.SetPaused(ctx, started.ID, users[0], false)
+	if err != nil || resumed.Status != "ACTIVE" || resumed.PausedAt != nil || resumed.TimerDeadlineAt == nil || resumed.TimerDeadlineAt.Sub(resumed.UpdatedAt) != paused.TimerDeadlineAt.Sub(*paused.PausedAt) {
+		t.Fatalf("resume must preserve remaining time: %+v %v", resumed, err)
+	}
+	checkWindow(15 * time.Second)
+	if _, err := as.SetPaused(ctx, started.ID, users[0], false); !errors.Is(err, repository.ErrControlConflict) {
+		t.Fatalf("repeated resume: %v", err)
+	}
 	advance("")
 	changeTime(`UPDATE auctions SET timer_deadline_at=clock_timestamp()-INTERVAL '1 second' WHERE id=$1`)
+	if _, err := as.SetPaused(ctx, started.ID, users[0], true); !errors.Is(err, repository.ErrControlConflict) {
+		t.Fatalf("expired pause: %v", err)
+	}
 	advance("PLAYER_UNSOLD")
 	advance("") // display interval: no immediate nomination
 	changeTime(`UPDATE auctions SET updated_at=clock_timestamp()-INTERVAL '4 seconds' WHERE id=$1`)
@@ -337,6 +381,29 @@ func TestLobbyLifecycleIntegration(t *testing.T) {
 		t.Fatalf("event replay: %+v %v %v", newer, replayed, err)
 	}
 	advance("")
+	// Pause a rolling timer, reject a NEW bid, preserve the accepted bid.
+	paused, err = as.SetPaused(ctx, started.ID, users[0], true)
+	if err != nil || paused.CurrentBid == nil || paused.CurrentBidderTeamID == nil || *paused.CurrentBidderTeamID != bidParams.TeamID {
+		t.Fatalf("pause with accepted bid: %+v %v", paused, err)
+	}
+	blocked := bidParams
+	blocked.TeamID = teams[0].ID
+	if err := pool.QueryRow(ctx, `SELECT gen_random_uuid(), ($1::numeric+0.10)::text`, bidParams.BidAmount).Scan(&blocked.RequestID, &blocked.BidAmount); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewBidWorkflowService(tm).AcceptBid(ctx, blocked); err == nil || !strings.Contains(err.Error(), "auction is not active") {
+		t.Fatalf("bid during pause: %v", err)
+	}
+	advance("")
+	resumed, err = as.SetPaused(ctx, started.ID, users[0], false)
+	if err != nil || resumed.CurrentBid == nil || *resumed.CurrentBid != *paused.CurrentBid || resumed.CurrentBidderTeamID == nil || *resumed.CurrentBidderTeamID != *paused.CurrentBidderTeamID || resumed.TimerDeadlineAt == nil || resumed.TimerDeadlineAt.Sub(resumed.UpdatedAt) != paused.TimerDeadlineAt.Sub(*paused.PausedAt) {
+		t.Fatalf("rolling resume: %+v %v", resumed, err)
+	}
+	checkWindow(7 * time.Second)
+	var pauseEvents, pauseOutbox int
+	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM auction_events WHERE auction_id=$1 AND event_type IN ('AUCTION_PAUSED','AUCTION_RESUMED')),(SELECT count(*) FROM outbox_events WHERE auction_id=$1 AND event_type IN ('AUCTION_PAUSED','AUCTION_RESUMED'))`, started.ID).Scan(&pauseEvents, &pauseOutbox); err != nil || pauseEvents != 4 || pauseOutbox != 4 {
+		t.Fatalf("pause/resume event counts %d/%d: %v", pauseEvents, pauseOutbox, err)
+	}
 	// A server restart must not settle even an expired timer.
 	changeTime(`UPDATE auctions SET timer_deadline_at=clock_timestamp()-INTERVAL '1 second' WHERE id=$1`)
 	if _, err := engine.RecoverOnStartup(ctx); err != nil {
