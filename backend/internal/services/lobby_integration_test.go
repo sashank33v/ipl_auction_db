@@ -292,8 +292,33 @@ func TestLobbyLifecycleIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	bidParams := repository.AcceptBidParams{AuctionID: started.ID, RoomPlayerID: preview[1].ID, TeamID: teams[0].ID, BidAmount: preview[1].BasePrice, RequestID: requestID, EventPayload: []byte(`{}`)}
-	if _, err := NewBidWorkflowService(tm).AcceptBid(ctx, bidParams); err != nil {
-		t.Fatal(err)
+	accepted, err := NewBidWorkflowService(tm).AcceptBid(ctx, bidParams)
+	if err != nil || accepted == nil || accepted.CreatedAt.IsZero() {
+		t.Fatalf("accepted bid timestamp: %+v %v", accepted, err)
+	}
+
+	// Snapshot is consistent with the accepted bid and the event watermark.
+	realtime := repository.NewRealtimeRepository(pool)
+	snap, _, err := realtime.Pull(ctx, started.ID, users[0], nil, true)
+	if err != nil || snap == nil || snap.Auction.CurrentBid == nil || snap.CurrentPlayer == nil || len(snap.Teams) != 4 || snap.LastEvent == nil || snap.LastEvent.EventType != "BID_ACCEPTED" {
+		t.Fatalf("live snapshot: %+v %v", snap, err)
+	}
+	if _, _, err := realtime.Pull(ctx, started.ID, outsider, nil, true); !errors.Is(err, repository.ErrRealtimeForbidden) {
+		t.Fatalf("outsider snapshot: %v", err)
+	}
+	firstCursor := snap.Sequence
+	same, _, err := realtime.Pull(ctx, started.ID, users[0], &firstCursor, false)
+	if err != nil || same != nil {
+		t.Fatalf("unchanged cursor: %v %v", same, err)
+	}
+	// Same request ID for a different team must not be treated as a valid retry.
+	wrong := bidParams
+	wrong.TeamID = teams[1].ID
+	if _, err := NewBidWorkflowService(tm).AcceptBid(ctx, wrong); err == nil {
+		t.Fatal("conflicting bid ID accepted")
+	}
+	if retry, err := NewBidWorkflowService(tm).AcceptBid(ctx, bidParams); err != nil || retry == nil || retry.ID != accepted.ID || !retry.CreatedAt.Equal(accepted.CreatedAt) {
+		t.Fatalf("same bid retry: %+v %v", retry, err)
 	}
 	checkWindow(7 * time.Second)
 	// A valid higher bid from another franchise must reset the rolling window.
@@ -305,7 +330,12 @@ func TestLobbyLifecycleIntegration(t *testing.T) {
 	if _, err := NewBidWorkflowService(tm).AcceptBid(ctx, bidParams); err != nil {
 		t.Fatal(err)
 	}
+
 	checkWindow(7 * time.Second)
+	newer, replayed, err := realtime.Pull(ctx, started.ID, users[0], &firstCursor, false)
+	if err != nil || newer == nil || len(replayed) != 1 || replayed[0].EventType != "BID_ACCEPTED" || newer.Sequence != firstCursor+1 {
+		t.Fatalf("event replay: %+v %v %v", newer, replayed, err)
+	}
 	advance("")
 	// A server restart must not settle even an expired timer.
 	changeTime(`UPDATE auctions SET timer_deadline_at=clock_timestamp()-INTERVAL '1 second' WHERE id=$1`)

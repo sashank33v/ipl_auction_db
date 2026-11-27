@@ -9,9 +9,11 @@ import (
 	auctionrules "github.com/sashank33v/ipl_auction_db/backend/internal/auction"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/database"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/rooms"
 )
 
 type AuctionService struct {
+	actors             *rooms.Manager
 	txManager          *database.TransactionManager
 	auctionRepo        *repository.AuctionRepository
 	roomPlayerRepo     *repository.RoomPlayerRepository

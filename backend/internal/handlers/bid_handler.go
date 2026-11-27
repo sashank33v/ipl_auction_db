@@ -1,10 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/rooms"
 	"io"
 	"math"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -38,6 +42,9 @@ func NewBidHandler(
 		bidWorkflowService: bidWorkflowService,
 	}
 }
+
+var bidUUID = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var bidMoney = regexp.MustCompile(`^[0-9]{1,4}(\.[0-9]{1,2})?$`)
 
 type PlaceBidRequest struct {
 	RoomPlayerID string `json:"room_player_id"`
@@ -83,57 +90,63 @@ func (h *BidHandler) PlaceBid(
 		return
 	}
 
-	req.RoomPlayerID = strings.TrimSpace(req.RoomPlayerID)
+	bid, status, err := h.placeAuthenticatedBid(r.Context(), userID, auctionID, req)
+	if err != nil {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	writeJSON(w, http.StatusOK, bid)
+}
+
+// Shared REST and WebSocket bid path. Team identity is resolved on the server.
+func (h *BidHandler) placeAuthenticatedBid(ctx context.Context, userID, auctionID string, req PlaceBidRequest) (*repository.Bid, int, error) {
+	req.RoomPlayerID = strings.ToLower(strings.TrimSpace(req.RoomPlayerID))
 	req.BidAmount = strings.TrimSpace(req.BidAmount)
-	req.RequestID = strings.TrimSpace(req.RequestID)
+	req.RequestID = strings.ToLower(strings.TrimSpace(req.RequestID))
 
 	if req.RoomPlayerID == "" ||
 		req.BidAmount == "" ||
 		req.RequestID == "" {
-		http.Error(
-			w,
-			"Room player ID, bid amount and request ID are required",
-			http.StatusBadRequest,
-		)
-		return
+		return nil, http.StatusBadRequest, errors.New("Room player ID, bid amount and request ID are required")
 	}
 
+	if !bidUUID.MatchString(auctionID) || !bidUUID.MatchString(req.RoomPlayerID) || !bidUUID.MatchString(req.RequestID) {
+		return nil, http.StatusBadRequest, errors.New("Auction, room player and request IDs must be UUIDs")
+	}
+	if !bidMoney.MatchString(req.BidAmount) {
+		return nil, http.StatusBadRequest, errors.New("Bid amount must be a decimal in crores with at most two decimal places")
+	}
 	// 4. Validate numeric bid amount
 	amount, err := strconv.ParseFloat(req.BidAmount, 64)
 	if err != nil || amount <= 0 ||
 		math.IsNaN(amount) || math.IsInf(amount, 0) {
-		http.Error(w, "Invalid bid amount", http.StatusBadRequest)
-		return
+		return nil, http.StatusBadRequest, errors.New("Invalid bid amount")
 	}
 
 	// 5. Retrieve auction
 	auction, err := h.auctionService.GetAuctionByID(
-		r.Context(),
+		ctx,
 		auctionID,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			http.Error(w, "Auction not found", http.StatusNotFound)
-			return
+			return nil, http.StatusNotFound, errors.New("Auction not found")
 		}
 
-		http.Error(w, "Failed to retrieve auction", http.StatusInternalServerError)
-		return
+		return nil, http.StatusInternalServerError, errors.New("Failed to retrieve auction")
 	}
 
 	if auction == nil {
-		http.Error(w, "Auction not found", http.StatusNotFound)
-		return
+		return nil, http.StatusNotFound, errors.New("Auction not found")
 	}
 
 	// 6. Find authenticated user's room participant
 	participants, err := h.participantService.GetRoomParticipants(
-		r.Context(),
+		ctx,
 		auction.RoomID,
 	)
 	if err != nil {
-		http.Error(w, "Failed to verify room membership", http.StatusInternalServerError)
-		return
+		return nil, http.StatusInternalServerError, errors.New("Failed to verify room membership")
 	}
 
 	var participantID string
@@ -146,24 +159,21 @@ func (h *BidHandler) PlaceBid(
 	}
 
 	if participantID == "" {
-		http.Error(w, "You are not a member of this room", http.StatusForbidden)
-		return
+		return nil, http.StatusForbidden, errors.New("You are not a member of this room")
 	}
 
 	// 7. Resolve the authenticated participant's team
 	team, err := h.teamService.GetTeamByParticipant(
-		r.Context(),
+		ctx,
 		auction.RoomID,
 		participantID,
 	)
 	if err != nil {
-		http.Error(w, "Failed to retrieve your team", http.StatusInternalServerError)
-		return
+		return nil, http.StatusInternalServerError, errors.New("Failed to retrieve your team")
 	}
 
 	if team == nil {
-		http.Error(w, "Select a team before placing bids", http.StatusConflict)
-		return
+		return nil, http.StatusConflict, errors.New("Select a team before placing bids")
 	}
 
 	// 8. Build server-controlled event payload
@@ -177,15 +187,14 @@ func (h *BidHandler) PlaceBid(
 		Amount:       req.BidAmount,
 	})
 	if err != nil {
-		http.Error(w, "Failed to prepare bid event", http.StatusInternalServerError)
-		return
+		return nil, http.StatusInternalServerError, errors.New("Failed to prepare bid event")
 	}
 
 	// 9. Execute transactional bid workflow
 	bid, err := h.bidWorkflowService.AcceptBid(
-		r.Context(),
+		ctx,
 		repository.AcceptBidParams{
-			AuctionID:    auctionID,
+			AuctionID:    auction.ID,
 			RoomPlayerID: req.RoomPlayerID,
 			TeamID:       team.ID,
 			BidAmount:    req.BidAmount,
@@ -194,29 +203,28 @@ func (h *BidHandler) PlaceBid(
 		},
 	)
 	if err != nil {
+		if errors.Is(err, rooms.ErrBusy) {
+			return nil, http.StatusServiceUnavailable, errors.New("Room is busy; retry with the same request ID")
+		}
 		message := err.Error()
 
 		if strings.Contains(message, "auction not found") {
-			http.Error(w, "Auction not found", http.StatusNotFound)
-			return
+			return nil, http.StatusNotFound, errors.New("Auction not found")
 		}
 
 		if strings.Contains(message, "requires a transaction") ||
 			strings.Contains(message, "not configured") {
-			http.Error(w, "Bid workflow is unavailable", http.StatusInternalServerError)
-			return
+			return nil, http.StatusInternalServerError, errors.New("Bid workflow is unavailable")
 		}
 
 		if strings.Contains(message, "accept bid workflow:") {
-			http.Error(w, "Bid rejected: "+message, http.StatusConflict)
-			return
+			return nil, http.StatusConflict, errors.New("Bid rejected by auction rules")
 		}
 
-		http.Error(w, "Failed to place bid", http.StatusInternalServerError)
-		return
+		return nil, http.StatusInternalServerError, errors.New("Failed to place bid")
 	}
 
-	writeJSON(w, http.StatusOK, bid)
+	return bid, http.StatusOK, nil
 }
 
 // Existing GET handlers remain unchanged.

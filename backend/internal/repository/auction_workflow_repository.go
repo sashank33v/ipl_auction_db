@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -61,7 +62,7 @@ func (r *AuctionWorkflowRepository) AcceptBid(
 	}
 
 	if existingBid != nil {
-		return existingBid, nil
+		return matchExistingBid(existingBid, params)
 	}
 
 	var (
@@ -122,7 +123,7 @@ func (r *AuctionWorkflowRepository) AcceptBid(
 	}
 
 	if existingBid != nil {
-		return existingBid, nil
+		return matchExistingBid(existingBid, params)
 	}
 
 	if auctionStatus != "ACTIVE" {
@@ -412,7 +413,8 @@ func (r *AuctionWorkflowRepository) AcceptBid(
 			team_id,
 			bid_amount,
 			request_id,
-			bid_sequence
+			bid_sequence,
+			created_at
 	`,
 		roomID,
 		params.AuctionID,
@@ -429,6 +431,7 @@ func (r *AuctionWorkflowRepository) AcceptBid(
 		&bid.BidAmount,
 		&bid.RequestID,
 		&bid.BidSequence,
+		&bid.CreatedAt,
 	)
 
 	if err != nil {
@@ -539,7 +542,8 @@ func (r *AuctionWorkflowRepository) getExistingBid(
 			team_id,
 			bid_amount,
 			request_id,
-			bid_sequence
+			bid_sequence,
+			created_at
 		FROM bids
 		WHERE auction_id = $1
 		  AND request_id = $2
@@ -554,6 +558,7 @@ func (r *AuctionWorkflowRepository) getExistingBid(
 		&bid.BidAmount,
 		&bid.RequestID,
 		&bid.BidSequence,
+		&bid.CreatedAt,
 	)
 
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -564,5 +569,16 @@ func (r *AuctionWorkflowRepository) getExistingBid(
 		return nil, fmt.Errorf("check duplicate bid: %w", err)
 	}
 
+	return bid, nil
+}
+
+// A retry must match the original team, player and amount exactly (decimal
+// formatting such as 2 and 2.00 is immaterial).
+func matchExistingBid(bid *Bid, params AcceptBidParams) (*Bid, error) {
+	a, okA := new(big.Rat).SetString(bid.BidAmount)
+	b, okB := new(big.Rat).SetString(params.BidAmount)
+	if bid.TeamID != params.TeamID || bid.RoomPlayerID != params.RoomPlayerID || !okA || !okB || a.Cmp(b) != 0 {
+		return nil, errors.New("request ID already used for a different bid")
+	}
 	return bid, nil
 }

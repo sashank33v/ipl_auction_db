@@ -15,6 +15,7 @@ import (
 	"github.com/sashank33v/ipl_auction_db/backend/internal/database"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/handlers"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/rooms"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/services"
 )
 
@@ -30,8 +31,12 @@ func main() {
 	}
 	defer db.Close()
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	actors := rooms.NewManager(ctx)
 	txManager := database.NewTransactionManager(db)
 	bidWorkflowService := services.NewBidWorkflowService(txManager)
+	bidWorkflowService.SetCommandManager(actors)
 	userRepo := repository.NewUserRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
 	roomRepo := repository.NewRoomRepository(db)
@@ -54,6 +59,7 @@ func main() {
 	playerService := services.NewPlayerService(playerRepo)
 	roomPlayerService := services.NewRoomPlayerService(txManager, roomPlayerRepo, roomRepo, playerRepo)
 	auctionService := services.NewAuctionService(txManager, auctionRepo, roomRepo, participantService, teamService)
+	auctionService.SetCommandManager(actors)
 	bidService := services.NewBidService(bidRepo, auctionRepo)
 	squadService := services.NewSquadService(squadRepo, teamRepo)
 	nominationService := services.NewUnsoldNominationService(nominationRepo, auctionRepo, teamRepo, roomPlayerRepo, nominationWorkflowService)
@@ -74,15 +80,15 @@ func main() {
 	eventHandler := handlers.NewAuctionEventHandler(eventService, auctionService, participantService)
 	mainNominationHandler := handlers.NewMainNominationHandler(mainNominationWorkflowService)
 
-	router := api.NewRouter(cfg.FrontendURL, authHandler, meHandler, roomHandler, participantHandler, teamHandler, playerHandler, roomPlayerHandler, auctionHandler, bidHandler, squadHandler, nominationHandler, mainNominationHandler, eventHandler, sessionService, userService)
+	realtimeHandler := handlers.NewRealtimeHandler(ctx, repository.NewRealtimeRepository(db), sessionService, bidHandler, cfg.FrontendURL)
+	router := api.NewRouter(cfg.FrontendURL, authHandler, meHandler, roomHandler, participantHandler, teamHandler, playerHandler, roomPlayerHandler, auctionHandler, bidHandler, squadHandler, nominationHandler, mainNominationHandler, eventHandler, sessionService, userService, realtimeHandler)
 
 	server := &http.Server{
 		Addr:    ":" + cfg.ServerPort,
 		Handler: router,
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	engine := services.NewAuctionEngineService(txManager, repository.NewAuctionEngineRepository(db))
+	engine.SetCommandManager(actors)
 	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, 10*time.Second)
 	recovered, err := engine.RecoverOnStartup(recoveryCtx)
 	recoveryCancel()
@@ -113,6 +119,8 @@ func main() {
 		}
 	}
 
+	realtimeHandler.Close()
 	<-engineDone
+	actors.Close()
 	log.Println("Server stopped")
 }

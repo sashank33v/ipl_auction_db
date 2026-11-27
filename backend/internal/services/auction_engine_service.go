@@ -3,17 +3,20 @@ package services
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/auction"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/database"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/rooms"
 )
 
 type AuctionEngineService struct {
 	txManager *database.TransactionManager
 	repo      *repository.AuctionEngineRepository
+	actors    *rooms.Manager
 }
 
 func NewAuctionEngineService(tm *database.TransactionManager, repo *repository.AuctionEngineRepository) *AuctionEngineService {
@@ -24,7 +27,17 @@ func (s *AuctionEngineService) RecoverOnStartup(ctx context.Context) (int64, err
 	return s.repo.RecoverOnStartup(ctx)
 }
 
+func (s *AuctionEngineService) SetCommandManager(m *rooms.Manager) { s.actors = m }
+
 func (s *AuctionEngineService) Advance(ctx context.Context, id string) (string, error) {
+	if s.actors == nil {
+		return s.advance(ctx, id)
+	}
+	var transition string
+	err := s.actors.Do(ctx, id, func(ctx context.Context) error { var err error; transition, err = s.advance(ctx, id); return err })
+	return transition, err
+}
+func (s *AuctionEngineService) advance(ctx context.Context, id string) (string, error) {
 	var transition string
 	err := s.txManager.WithinTransaction(ctx, func(tx pgx.Tx) error {
 		var err error
@@ -68,7 +81,14 @@ func (s *AuctionEngineService) Run(ctx context.Context) {
 	})
 }
 
+func (s *AuctionService) SetCommandManager(m *rooms.Manager) { s.actors = m }
 func (s *AuctionService) ResumeRecoveredAuction(ctx context.Context, id, userID string) error {
+	if s.actors == nil {
+		return s.resumeRecoveredAuction(ctx, id, userID)
+	}
+	return s.actors.Do(ctx, strings.ToLower(id), func(ctx context.Context) error { return s.resumeRecoveredAuction(ctx, id, userID) })
+}
+func (s *AuctionService) resumeRecoveredAuction(ctx context.Context, id, userID string) error {
 	return s.txManager.WithinTransaction(ctx, func(tx pgx.Tx) error {
 		return repository.NewAuctionEngineRepository(tx).ResumeRecovered(ctx, id, userID)
 	})

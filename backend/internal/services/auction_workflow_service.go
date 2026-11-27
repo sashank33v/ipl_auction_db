@@ -9,10 +9,12 @@ import (
 
 	"github.com/sashank33v/ipl_auction_db/backend/internal/database"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/rooms"
 )
 
 type BidWorkflowService struct {
 	txManager *database.TransactionManager
+	actors    *rooms.Manager
 }
 
 func NewBidWorkflowService(
@@ -23,7 +25,22 @@ func NewBidWorkflowService(
 	}
 }
 
-func (s *BidWorkflowService) AcceptBid(
+// SetCommandManager is called once during server startup.
+func (s *BidWorkflowService) SetCommandManager(m *rooms.Manager) { s.actors = m }
+
+func (s *BidWorkflowService) AcceptBid(ctx context.Context, params repository.AcceptBidParams) (*repository.Bid, error) {
+	if s == nil || s.actors == nil {
+		return s.acceptBid(ctx, params)
+	}
+	var bid *repository.Bid
+	err := s.actors.Do(ctx, params.AuctionID, func(ctx context.Context) error { var err error; bid, err = s.acceptBid(ctx, params); return err })
+	if err != nil {
+		return nil, err
+	}
+	return bid, nil
+}
+
+func (s *BidWorkflowService) acceptBid(
 	ctx context.Context,
 	params repository.AcceptBidParams,
 ) (*repository.Bid, error) {

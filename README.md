@@ -656,12 +656,22 @@ Main-queue MVP implementation (Milestone 3A):
 - A three-second transition interval before each automatic reveal (including the first) gives the interface time for result presentation. This is an implementation default, not an extension of the bidding window.
 - Starting the auction automatically schedules the first player; manual nomination HTTP route is superseded. Main pool exhaustion leaves the auction active and idle until host-controlled unsold rounds are implemented.
 - On process startup active auctions enter `RECOVERING` before HTTP starts. `POST /auctions/{auctionID}/recover/resume` is host-only for synchronized MAIN rooms. It preserves the current player and accepted bid and opens a fresh full 15-second (no bid) or 7-second (accepted bid) window because downtime is not bidding time. Exact pre-crash remaining time restoration and multi-instance coordination are future work.
-- Single backend instance only for this MVP. WebSocket broadcast, pause/skip, unsold mini-auctions and final completion remain future milestones.
+- Single backend instance only for this MVP. Milestone 4A adds a WebSocket auction stream and serialized bid/timer/recovery commands. Shared outbox fan-out, presence, pause/skip, unsold mini-auctions and final completion remain future milestones.
 
 
 ## WebSocket protocol
 
 One WebSocket connection is maintained per participant per room.
+
+### Milestone 4A implementation contract
+
+- Endpoint: `GET /ws/auctions/{auctionID}` (WebSocket upgrade). Use existing `ipl_session` cookie, room membership, and the configured frontend Origin for browsers. No-origin non-browser clients still require a valid session. A new connection for the same participant/room replaces the older one.
+- Initial `AUCTION_STATE` contains `auction`, `room_status`, `server_time`, `sequence`, `current_room_player`, `current_player`, `teams`, `squads`, and `last_event`. Derive the countdown from the persisted deadline and server time, not local countdown messages.
+- Send `{"type":"REQUEST_SNAPSHOT"}` to refresh, or `{"type":"BID_PLACE","payload":{"room_player_id":"<uuid>","bid_amount":"2.00","request_id":"<uuid>"}}`. Team identity is resolved on the server. REST bidding remains available. An accepted command yields `BID_RESULT`; persisted `BID_ACCEPTED`, `PLAYER_REVEALED` (mapped from `PLAYER_NOMINATED`), `PLAYER_SOLD`, `PLAYER_UNSOLD` and other committed events have event_id and sequence. Rejected commands yield `BID_REJECTED` without advancing the cursor. Clients apply durable events in sequence, then replace state from the authoritative snapshot; snapshots are not extra durable events.
+- First connection/reconnection receives a fresh snapshot. While connected, poll committed event watermark every 500ms, refresh snapshot at least every 2s (subject to DB/network delays), replay up to 100 contiguous events; on a gap or larger backlog send snapshot instead. Each connection polls independently for this milestone; shared outbox broadcaster is not implemented. No separate purse/squad events yet: values are in the snapshot.
+- Ping every 15s, 40s pong/read deadline, 5s write deadline, 8 KiB message cap, bounded inbound and actor queues. Sessions and membership rechecked; disconnect on errors. No persisted presence updates in this milestone. Host controls use existing REST routes; unsupported socket commands return ERROR.
+- One actor per active auction (one auction per room), created on demand and removed when idle. REST/socket bids, timer transitions and recovery resume share its command stream. Lobby/auction start remain transaction guarded. Single process only; DB locks remain essential. This is an interim transport, not a production-scale fan-out system.
+
 
 ### Communication model
 

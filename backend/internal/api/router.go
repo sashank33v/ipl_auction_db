@@ -12,14 +12,13 @@ import (
 	"github.com/sashank33v/ipl_auction_db/backend/internal/services"
 )
 
-func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler *handlers.MeHandler, roomHandler *handlers.RoomHandler, participantHandler *handlers.RoomParticipantHandler, teamHandler *handlers.TeamHandler, playerHandler *handlers.PlayerHandler, roomPlayerHandler *handlers.RoomPlayerHandler, auctionHandler *handlers.AuctionHandler, bidHandler *handlers.BidHandler, squadHandler *handlers.SquadHandler, nominationHandler *handlers.UnsoldNominationHandler, mainNominationHandler *handlers.MainNominationHandler, eventHandler *handlers.AuctionEventHandler, sessionService *services.SessionService, userService *services.UserService) http.Handler {
+func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler *handlers.MeHandler, roomHandler *handlers.RoomHandler, participantHandler *handlers.RoomParticipantHandler, teamHandler *handlers.TeamHandler, playerHandler *handlers.PlayerHandler, roomPlayerHandler *handlers.RoomPlayerHandler, auctionHandler *handlers.AuctionHandler, bidHandler *handlers.BidHandler, squadHandler *handlers.SquadHandler, nominationHandler *handlers.UnsoldNominationHandler, mainNominationHandler *handlers.MainNominationHandler, eventHandler *handlers.AuctionEventHandler, sessionService *services.SessionService, userService *services.UserService, realtimeHandler *handlers.RealtimeHandler) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimiddleware.RequestID)
 	r.Use(appmiddleware.CORS(frontendURL))
 	r.Use(appmiddleware.Logger)
 	r.Use(appmiddleware.Recovery)
-	r.Use(chimiddleware.Timeout(30 * time.Second))
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -27,12 +26,16 @@ func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler 
 	})
 
 	r.Route("/auth", func(r chi.Router) {
+		r.Use(chimiddleware.Timeout(30 * time.Second))
 		r.Post("/register", authHandler.Register)
 		r.Post("/login", authHandler.Login)
 		r.Post("/logout", authHandler.Logout)
 	})
 
+	// A WebSocket connection must not inherit the REST 30-second timeout.
+	r.With(appmiddleware.Auth(sessionService)).Get("/ws/auctions/{auctionID}", realtimeHandler.ServeHTTP)
 	r.Group(func(r chi.Router) {
+		r.Use(chimiddleware.Timeout(30 * time.Second))
 		r.Use(appmiddleware.Auth(sessionService))
 
 		r.Get("/auth/me", meHandler.GetMe)
