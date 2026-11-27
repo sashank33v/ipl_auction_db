@@ -53,6 +53,7 @@ type AuthResponse struct {
 		ID       string `json:"id"`
 		Username string `json:"username"`
 		Email    string `json:"email"`
+		IsAdmin  bool   `json:"is_admin"`
 	} `json:"user"`
 }
 
@@ -230,6 +231,7 @@ func writeAuthResponse(
 	response.User.ID = user.ID
 	response.User.Username = user.Username
 	response.User.Email = user.Email
+	response.User.IsAdmin = user.IsAdmin
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

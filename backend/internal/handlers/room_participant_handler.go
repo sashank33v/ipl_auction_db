@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -23,20 +24,20 @@ func NewRoomParticipantHandler(
 }
 
 type JoinRoomRequest struct {
-	RoomID string `json:"room_id"`
+	RoomCode string `json:"room_code"`
 }
 
-func (h *RoomParticipantHandler) JoinRoom(
-	w http.ResponseWriter,
-	r *http.Request,
-) {
+func (h *RoomParticipantHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
+
 	userID, ok := middleware.UserIDFromContext(r.Context())
+
 	if !ok || userID == "" {
 		http.Error(w, "Authentication required", http.StatusUnauthorized)
 		return
 	}
 
 	var req JoinRoomRequest
+
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -44,30 +45,33 @@ func (h *RoomParticipantHandler) JoinRoom(
 		return
 	}
 
-	roomID := strings.TrimSpace(req.RoomID)
-	if roomID == "" {
-		http.Error(w, "Room ID is required", http.StatusBadRequest)
+	roomCode := strings.TrimSpace(req.RoomCode)
+
+	if roomCode == "" {
+		http.Error(w, "Room code is required", http.StatusBadRequest)
 		return
 	}
 
 	participant, err := h.participantService.JoinRoom(
 		r.Context(),
-		roomID,
+		roomCode,
 		userID,
 	)
+
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
+
+		switch {
+		case errors.Is(err, services.ErrInvalidRoomCode):
+			http.Error(w, "Invalid room code", http.StatusNotFound)
+
+		case errors.Is(err, services.ErrRoomClosed),
+			errors.Is(err, services.ErrRoomFull):
+			http.Error(w, "Room is full or locked", http.StatusConflict)
+
+		default:
+			http.Error(w, "Failed to join room", http.StatusInternalServerError)
 		}
 
-		if strings.Contains(err.Error(), "full") ||
-			strings.Contains(err.Error(), "not accepting") {
-			http.Error(w, err.Error(), http.StatusConflict)
-			return
-		}
-
-		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -77,10 +81,7 @@ func (h *RoomParticipantHandler) JoinRoom(
 	})
 }
 
-func (h *RoomParticipantHandler) GetRoomParticipants(
-	w http.ResponseWriter,
-	r *http.Request,
-) {
+func (h *RoomParticipantHandler) GetRoomParticipants(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok || userID == "" {
 		http.Error(w, "Authentication required", http.StatusUnauthorized)

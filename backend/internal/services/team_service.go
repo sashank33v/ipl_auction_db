@@ -6,21 +6,26 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/database"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
 )
 
 type TeamService struct {
+	txManager       *database.TransactionManager
 	teamRepo        *repository.TeamRepository
 	roomRepo        *repository.RoomRepository
 	participantRepo *repository.RoomParticipantRepository
 }
 
 func NewTeamService(
+	txManager *database.TransactionManager,
 	teamRepo *repository.TeamRepository,
 	roomRepo *repository.RoomRepository,
 	participantRepo *repository.RoomParticipantRepository,
 ) *TeamService {
 	return &TeamService{
+		txManager:       txManager,
 		teamRepo:        teamRepo,
 		roomRepo:        roomRepo,
 		participantRepo: participantRepo,
@@ -40,7 +45,21 @@ var allowedFranchises = map[string]string{
 	"SRH":  "Sunrisers Hyderabad",
 }
 
-func (s *TeamService) CreateTeam(
+func (s *TeamService) CreateTeam(ctx context.Context, team *repository.Team) error {
+	if s.txManager == nil {
+		return errors.New("transaction manager is not configured")
+	}
+	return s.txManager.WithinTransaction(ctx, func(tx pgx.Tx) error {
+		scoped := &TeamService{
+			teamRepo:        repository.NewTeamRepository(tx),
+			roomRepo:        repository.NewRoomRepository(tx),
+			participantRepo: repository.NewRoomParticipantRepository(tx),
+		}
+		return scoped.createTeamLocked(ctx, team)
+	})
+}
+
+func (s *TeamService) createTeamLocked(
 	ctx context.Context,
 	team *repository.Team,
 ) error {
@@ -67,7 +86,7 @@ func (s *TeamService) CreateTeam(
 
 	team.FranchiseName = franchiseName
 
-	room, err := s.roomRepo.GetByID(ctx, team.RoomID)
+	room, err := s.roomRepo.GetByIDForUpdate(ctx, team.RoomID)
 	if err != nil {
 		return fmt.Errorf("get room: %w", err)
 	}

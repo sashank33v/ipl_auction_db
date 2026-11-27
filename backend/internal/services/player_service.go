@@ -42,7 +42,7 @@ func validatePlayer(player *repository.Player) error {
 	}
 
 	switch player.Role {
-	case "BATSMAN", "BOWLER", "ALL_ROUNDER", "WICKET_KEEPER":
+	case "BATTER", "BOWLER", "ALL_ROUNDER", "WICKET_KEEPER":
 	default:
 		return errors.New("invalid player role")
 	}

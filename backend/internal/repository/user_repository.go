@@ -16,6 +16,7 @@ type User struct {
 	Username     string `json:"username"`
 	Email        string `json:"email"`
 	PasswordHash string `json:"-"`
+	IsAdmin      bool   `json:"is_admin"`
 }
 
 func NewUserRepository(db DBTX) *UserRepository {
@@ -28,7 +29,7 @@ func (r *UserRepository) Create(ctx context.Context, user *User) error {
 	query := `
 		INSERT INTO users (username, email, password_hash)
 		VALUES ($1, $2, $3)
-		RETURNING id
+		RETURNING id, is_admin
 	`
 
 	err := r.db.QueryRow(
@@ -37,7 +38,7 @@ func (r *UserRepository) Create(ctx context.Context, user *User) error {
 		user.Username,
 		user.Email,
 		user.PasswordHash,
-	).Scan(&user.ID)
+	).Scan(&user.ID, &user.IsAdmin)
 
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
@@ -51,7 +52,7 @@ func (r *UserRepository) GetByID(
 	id string,
 ) (*User, error) {
 	query := `
-		SELECT id, username, email, password_hash
+		SELECT id, username, email, password_hash, is_admin
 		FROM users
 		WHERE id = $1
 	`
@@ -63,6 +64,7 @@ func (r *UserRepository) GetByID(
 		&user.Username,
 		&user.Email,
 		&user.PasswordHash,
+		&user.IsAdmin,
 	)
 
 	if err != nil {
@@ -80,7 +82,7 @@ func (r *UserRepository) GetByEmail(
 	email string,
 ) (*User, error) {
 	query := `
-		SELECT id, username, email, password_hash
+		SELECT id, username, email, password_hash, is_admin
 		FROM users
 		WHERE LOWER(email) = LOWER($1)
 	`
@@ -92,6 +94,7 @@ func (r *UserRepository) GetByEmail(
 		&user.Username,
 		&user.Email,
 		&user.PasswordHash,
+		&user.IsAdmin,
 	)
 
 	if err != nil {
@@ -106,7 +109,7 @@ func (r *UserRepository) GetByEmail(
 
 func (r *UserRepository) GetAll(ctx context.Context) ([]User, error) {
 	query := `
-		SELECT id, username, email, password_hash
+		SELECT id, username, email, password_hash, is_admin
 		FROM users
 		ORDER BY created_at DESC
 	`
@@ -127,6 +130,7 @@ func (r *UserRepository) GetAll(ctx context.Context) ([]User, error) {
 			&user.Username,
 			&user.Email,
 			&user.PasswordHash,
+			&user.IsAdmin,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan user: %w", err)

@@ -64,7 +64,7 @@ func (r *AuctionUnsoldRepository) MarkUnsold(
 			current_bidder_team_id,
 			(
 				timer_deadline_at IS NOT NULL
-				AND timer_deadline_at <= NOW()
+				AND timer_deadline_at <= clock_timestamp()
 			)
 		FROM auctions
 		WHERE id = $1
@@ -211,7 +211,7 @@ func (r *AuctionUnsoldRepository) MarkUnsold(
 		    current_bidder_team_id = NULL,
 		    timer_started_at = NULL,
 		    timer_deadline_at = NULL,
-		    updated_at = NOW()
+		    updated_at = statement_timestamp()
 		WHERE id = $1
 	`,
 		params.AuctionID,

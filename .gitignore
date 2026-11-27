@@ -1,23 +1,28 @@
-# Environment variables
+# Environment variables and secrets
 .env
+.env.*
+!.env.example
 
-# Go
-/backend/bin/
-/backend/tmp/
+# Python cache
+__pycache__/
+*.pyc
+.venv/
 
-# Frontend
-/frontend/node_modules/
-/frontend/.next/
-/frontend/out/
-
+# Database backups
+before_543_update.sql
+player_data_backup.sql
+*_backup.sql
+*.dump
+backups/
+cookies.txt
 # Logs
 *.log
+logs/
 
-# IDE
+# Build artifacts
+/bin/
+/dist/
+
+# IDE configurations
 .vscode/
 .idea/
-
-# OS
-.DS_Store
-
-cookies.txt

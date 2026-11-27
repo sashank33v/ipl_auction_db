@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/middleware"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/services"
 )
 
@@ -215,7 +217,9 @@ func (h *AuctionHandler) StartAuction(
 			http.Error(w, err.Error(), http.StatusNotFound)
 		case strings.Contains(err.Error(), "only room host"):
 			http.Error(w, err.Error(), http.StatusForbidden)
-		case strings.Contains(err.Error(), "minimum"),
+		case strings.Contains(err.Error(), "auction queue conflict"),
+			strings.Contains(err.Error(), "every participant"),
+			strings.Contains(err.Error(), "minimum"),
 			strings.Contains(err.Error(), "waiting state"):
 			http.Error(w, err.Error(), http.StatusConflict)
 		default:
@@ -225,4 +229,31 @@ func (h *AuctionHandler) StartAuction(
 	}
 
 	writeJSON(w, http.StatusOK, auction)
+}
+
+func (h *AuctionHandler) ResumeRecoveredAuction(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok || userID == "" {
+		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		return
+	}
+	id := chi.URLParam(r, "auctionID")
+	if id == "" {
+		http.Error(w, "Auction ID required", http.StatusBadRequest)
+		return
+	}
+	err := h.auctionService.ResumeRecoveredAuction(r.Context(), id, userID)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ACTIVE"})
+	case errors.Is(err, repository.ErrRecoveryNotFound):
+		http.Error(w, "Auction not found", http.StatusNotFound)
+	case errors.Is(err, repository.ErrRecoveryHostOnly):
+		http.Error(w, "Only room host can resume", http.StatusForbidden)
+	case errors.Is(err, repository.ErrRecoveryConflict):
+		http.Error(w, "Auction is not recoverable", http.StatusConflict)
+	default:
+		log.Printf("recover auction %s: %v", id, err)
+		http.Error(w, "Failed to resume auction", http.StatusInternalServerError)
+	}
 }

@@ -5,23 +5,30 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
+	auctionrules "github.com/sashank33v/ipl_auction_db/backend/internal/auction"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/database"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
 )
 
 type AuctionService struct {
+	txManager          *database.TransactionManager
 	auctionRepo        *repository.AuctionRepository
+	roomPlayerRepo     *repository.RoomPlayerRepository
 	roomRepo           *repository.RoomRepository
 	participantService *RoomParticipantService
 	teamService        *TeamService
 }
 
 func NewAuctionService(
+	txManager *database.TransactionManager,
 	auctionRepo *repository.AuctionRepository,
 	roomRepo *repository.RoomRepository,
 	participantService *RoomParticipantService,
 	teamService *TeamService,
 ) *AuctionService {
 	return &AuctionService{
+		txManager:          txManager,
 		auctionRepo:        auctionRepo,
 		roomRepo:           roomRepo,
 		participantService: participantService,
@@ -29,7 +36,27 @@ func NewAuctionService(
 	}
 }
 
-func (s *AuctionService) CreateAuction(
+func (s *AuctionService) CreateAuction(ctx context.Context, roomID string) (*repository.Auction, error) {
+	if s.txManager == nil {
+		return nil, errors.New("transaction manager is not configured")
+	}
+	var result *repository.Auction
+	err := s.txManager.WithinTransaction(ctx, func(tx pgx.Tx) error {
+		scoped := &AuctionService{
+			auctionRepo: repository.NewAuctionRepository(tx),
+			roomRepo:    repository.NewRoomRepository(tx),
+		}
+		var err error
+		result, err = scoped.createAuctionLocked(ctx, roomID)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *AuctionService) createAuctionLocked(
 	ctx context.Context,
 	roomID string,
 ) (*repository.Auction, error) {
@@ -37,7 +64,7 @@ func (s *AuctionService) CreateAuction(
 		return nil, errors.New("room ID is required")
 	}
 
-	room, err := s.roomRepo.GetByID(ctx, roomID)
+	room, err := s.roomRepo.GetByIDForUpdate(ctx, roomID)
 	if err != nil {
 		return nil, fmt.Errorf("get room: %w", err)
 	}
@@ -106,7 +133,30 @@ func (s *AuctionService) GetAuctionByRoom(
 	return auction, nil
 }
 
-func (s *AuctionService) StartAuction(
+func (s *AuctionService) StartAuction(ctx context.Context, roomID, userID string) (*repository.Auction, error) {
+	if s.txManager == nil {
+		return nil, errors.New("transaction manager is not configured")
+	}
+	var result *repository.Auction
+	err := s.txManager.WithinTransaction(ctx, func(tx pgx.Tx) error {
+		scoped := &AuctionService{
+			auctionRepo:        repository.NewAuctionRepository(tx),
+			roomPlayerRepo:     repository.NewRoomPlayerRepository(tx),
+			roomRepo:           repository.NewRoomRepository(tx),
+			participantService: &RoomParticipantService{participantRepo: repository.NewRoomParticipantRepository(tx)},
+			teamService:        &TeamService{teamRepo: repository.NewTeamRepository(tx)},
+		}
+		var err error
+		result, err = scoped.startAuctionLocked(ctx, roomID, userID)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *AuctionService) startAuctionLocked(
 	ctx context.Context,
 	roomID string,
 	userID string,
@@ -116,7 +166,7 @@ func (s *AuctionService) StartAuction(
 		return nil, errors.New("room ID and user ID are required")
 	}
 
-	room, err := s.roomRepo.GetByID(ctx, roomID)
+	room, err := s.roomRepo.GetByIDForUpdate(ctx, roomID)
 	if err != nil {
 		return nil, fmt.Errorf("get room: %w", err)
 	}
@@ -152,8 +202,19 @@ func (s *AuctionService) StartAuction(
 		return nil, fmt.Errorf("get participants: %w", err)
 	}
 
-	if len(participants) < 4 {
-		return nil, errors.New("minimum 4 participants required")
+	if len(participants) < 4 || len(participants) > room.MaxParticipants {
+		return nil, errors.New("participant count must be within room capacity (minimum 4)")
+	}
+
+	hostJoined := false
+	for _, participant := range participants {
+		if participant.UserID == userID {
+			hostJoined = true
+			break
+		}
+	}
+	if !hostJoined {
+		return nil, errors.New("host must join and select a franchise before starting")
 	}
 
 	teams, err := s.teamService.GetTeamsByRoom(ctx, roomID)
@@ -161,10 +222,17 @@ func (s *AuctionService) StartAuction(
 		return nil, fmt.Errorf("get teams: %w", err)
 	}
 
-	if len(teams) < 4 {
-		return nil, errors.New("minimum 4 teams required")
+	if len(teams) != len(participants) {
+		return nil, errors.New("every participant must select a franchise before starting")
 	}
 
+	if _, err := s.roomPlayerRepo.EnsureAuctionQueue(ctx, roomID, auctionrules.QueueOptions{}, false); err != nil {
+		return nil, fmt.Errorf("prepare auction queue: %w", err)
+	}
+
+	if err := s.roomRepo.MarkInProgress(ctx, roomID); err != nil {
+		return nil, fmt.Errorf("lock room: %w", err)
+	}
 	if err := s.auctionRepo.StartAuction(ctx, auction.ID); err != nil {
 		return nil, fmt.Errorf("start auction: %w", err)
 	}

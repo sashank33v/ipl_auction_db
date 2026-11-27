@@ -98,18 +98,26 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RoomHandler) GetRoomByID(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok || userID == "" {
+		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		return
+	}
 	roomID := strings.TrimSpace(chi.URLParam(r, "id"))
 	if roomID == "" {
 		http.Error(w, "Room ID is required", http.StatusBadRequest)
 		return
 	}
 
-	room, err := h.roomService.GetRoomByID(r.Context(), roomID)
+	room, err := h.roomService.GetRoomForUser(r.Context(), roomID, userID)
 	if err != nil {
+		http.Error(w, "Failed to retrieve room", http.StatusInternalServerError)
+		return
+	}
+	if room == nil {
 		http.Error(w, "Room not found", http.StatusNotFound)
 		return
 	}
-
 	writeJSON(w, http.StatusOK, map[string]any{"room": room})
 }
 
@@ -130,7 +138,12 @@ func (h *RoomHandler) GetRoomByCode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RoomHandler) GetAllRooms(w http.ResponseWriter, r *http.Request) {
-	rooms, err := h.roomService.GetAllRooms(r.Context())
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok || userID == "" {
+		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		return
+	}
+	rooms, err := h.roomService.GetAllRooms(r.Context(), userID)
 	if err != nil {
 		http.Error(w, "Failed to retrieve rooms", http.StatusInternalServerError)
 		return

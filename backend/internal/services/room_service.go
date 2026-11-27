@@ -4,19 +4,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/auction"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/database"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
 )
 
 type RoomService struct {
-	roomRepo *repository.RoomRepository
+	txManager *database.TransactionManager
+	roomRepo  *repository.RoomRepository
 }
 
-func NewRoomService(roomRepo *repository.RoomRepository) *RoomService {
+func NewRoomService(txManager *database.TransactionManager, roomRepo *repository.RoomRepository) *RoomService {
 	return &RoomService{
-		roomRepo: roomRepo,
+		txManager: txManager,
+		roomRepo:  roomRepo,
 	}
 }
 
@@ -43,54 +47,27 @@ func (s *RoomService) CreateRoom(
 		return errors.New("maximum participants must be between 4 and 10")
 	}
 
-	if room.StartingPurse == "" {
-		room.StartingPurse = "120.00"
-	}
-
-	if room.MinSquadSize == 0 {
-		room.MinSquadSize = 18
-	}
-
-	if room.MaxSquadSize == 0 {
-		room.MaxSquadSize = 25
-	}
-
-	if room.MaxOverseasPlayers == 0 {
-		room.MaxOverseasPlayers = 8
-	}
-
-	if room.MinBidIncrement == "" {
-		room.MinBidIncrement = "0.10"
-	}
-
-	startingPurse, err := strconv.ParseFloat(room.StartingPurse, 64)
-	if err != nil || startingPurse <= 0 {
-		return errors.New("starting purse must be a positive number")
-	}
-
-	minBidIncrement, err := strconv.ParseFloat(room.MinBidIncrement, 64)
-	if err != nil || minBidIncrement <= 0 {
-		return errors.New("minimum bid increment must be a positive number")
-	}
-
-	if room.MinSquadSize < 1 ||
-		room.MinSquadSize > room.MaxSquadSize {
-		return errors.New("invalid squad size limits")
-	}
-
-	if room.MaxSquadSize < 18 || room.MaxSquadSize > 25 {
-		return errors.New("maximum squad size must be between 18 and 25")
-	}
-
-	if room.MaxOverseasPlayers < 0 ||
-		room.MaxOverseasPlayers > room.MaxSquadSize {
-		return errors.New("invalid overseas player limit")
+	if err := applyApprovedRules(room); err != nil {
+		return err
 	}
 
 	if err := s.roomRepo.Create(ctx, room); err != nil {
 		return fmt.Errorf("create room: %w", err)
 	}
+	return nil
+}
 
+// applyApprovedRules rejects caller overrides and stores canonical rule values.
+func applyApprovedRules(room *repository.Room) error {
+	if err := auction.ValidateRoomRules(room.StartingPurse, room.MinBidIncrement, room.MinSquadSize, room.MaxSquadSize, room.MaxOverseasPlayers); err != nil {
+		return err
+	}
+
+	room.StartingPurse = auction.StartingPurse
+	room.MinBidIncrement = auction.MinBidIncrement
+	room.MinSquadSize = auction.MinSquadSize
+	room.MaxSquadSize = auction.MaxSquadSize
+	room.MaxOverseasPlayers = auction.MaxOverseasPlayers
 	return nil
 }
 
@@ -113,6 +90,10 @@ func (s *RoomService) GetRoomByID(
 	return room, nil
 }
 
+func (s *RoomService) GetRoomForUser(ctx context.Context, id, userID string) (*repository.Room, error) {
+	return s.roomRepo.GetByIDForUser(ctx, id, userID)
+}
+
 func (s *RoomService) GetRoomByCode(
 	ctx context.Context,
 	code string,
@@ -133,9 +114,12 @@ func (s *RoomService) GetRoomByCode(
 }
 
 func (s *RoomService) GetAllRooms(
-	ctx context.Context,
+	ctx context.Context, userID string,
 ) ([]repository.Room, error) {
-	rooms, err := s.roomRepo.GetAll(ctx)
+	if userID == "" {
+		return nil, errors.New("user ID is required")
+	}
+	rooms, err := s.roomRepo.GetForUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get rooms: %w", err)
 	}
@@ -143,9 +127,20 @@ func (s *RoomService) GetAllRooms(
 	return rooms, nil
 }
 
-func (s *RoomService) UpdateRoom(
+func (s *RoomService) UpdateRoom(ctx context.Context, room *repository.Room) error {
+	if s.txManager == nil {
+		return errors.New("transaction manager is not configured")
+	}
+	return s.txManager.WithinTransaction(ctx, func(tx pgx.Tx) error {
+		scoped := &RoomService{roomRepo: repository.NewRoomRepository(tx)}
+		return scoped.updateRoomLocked(ctx, room, tx)
+	})
+}
+
+func (s *RoomService) updateRoomLocked(
 	ctx context.Context,
 	room *repository.Room,
+	tx pgx.Tx,
 ) error {
 	if room == nil {
 		return errors.New("room is required")
@@ -160,7 +155,7 @@ func (s *RoomService) UpdateRoom(
 		return errors.New("room name is required")
 	}
 
-	existing, err := s.roomRepo.GetByID(ctx, room.ID)
+	existing, err := s.roomRepo.GetByIDForUpdate(ctx, room.ID)
 	if err != nil {
 		return fmt.Errorf("get room before update: %w", err)
 	}
@@ -172,15 +167,20 @@ func (s *RoomService) UpdateRoom(
 		return errors.New("only waiting rooms can be updated")
 	}
 
-	if room.MaxParticipants != 0 &&
-		(room.MaxParticipants < 4 || room.MaxParticipants > 10) {
+	if room.MaxParticipants == 0 {
+		room.MaxParticipants = existing.MaxParticipants
+	}
+	if room.MaxParticipants < 4 || room.MaxParticipants > 10 {
 		return errors.New("maximum participants must be between 4 and 10")
 	}
 
-	if room.MinSquadSize != 0 &&
-		room.MaxSquadSize != 0 &&
-		room.MinSquadSize > room.MaxSquadSize {
-		return errors.New("minimum squad size cannot exceed maximum squad size")
+	participants, err := repository.NewRoomParticipantRepository(tx).GetByRoom(ctx, room.ID)
+	if err != nil {
+		return err
+	}
+	participantCount := len(participants)
+	if room.MaxParticipants < participantCount {
+		return errors.New("capacity cannot be smaller than existing membership")
 	}
 
 	if err := s.roomRepo.Update(ctx, room); err != nil {
@@ -190,7 +190,17 @@ func (s *RoomService) UpdateRoom(
 	return nil
 }
 
-func (s *RoomService) DeleteRoom(
+func (s *RoomService) DeleteRoom(ctx context.Context, id string) error {
+	if s.txManager == nil {
+		return errors.New("transaction manager is not configured")
+	}
+	return s.txManager.WithinTransaction(ctx, func(tx pgx.Tx) error {
+		scoped := &RoomService{roomRepo: repository.NewRoomRepository(tx)}
+		return scoped.deleteRoomLocked(ctx, id)
+	})
+}
+
+func (s *RoomService) deleteRoomLocked(
 	ctx context.Context,
 	id string,
 ) error {
@@ -198,7 +208,7 @@ func (s *RoomService) DeleteRoom(
 		return errors.New("room ID is required")
 	}
 
-	room, err := s.roomRepo.GetByID(ctx, id)
+	room, err := s.roomRepo.GetByIDForUpdate(ctx, id)
 	if err != nil {
 		return fmt.Errorf("get room before deletion: %w", err)
 	}

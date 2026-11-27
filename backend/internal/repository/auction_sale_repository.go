@@ -69,7 +69,7 @@ func (r *AuctionSaleRepository) CompleteSale(
 			a.current_bid,
 			(
 				a.timer_deadline_at IS NOT NULL
-				AND a.timer_deadline_at <= NOW()
+				AND a.timer_deadline_at <= clock_timestamp()
 			),
 			r.max_squad_size,
 			r.max_overseas_players
@@ -345,7 +345,7 @@ func (r *AuctionSaleRepository) CompleteSale(
 		    current_bidder_team_id = NULL,
 		    timer_started_at = NULL,
 		    timer_deadline_at = NULL,
-		    updated_at = NOW()
+		    updated_at = statement_timestamp()
 		WHERE id = $1
 	`,
 		params.AuctionID,

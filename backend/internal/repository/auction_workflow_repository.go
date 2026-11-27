@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -68,6 +69,7 @@ func (r *AuctionWorkflowRepository) AcceptBid(
 		auctionStatus   string
 		currentPlayerID *string
 		currentBid      *string
+		deadlineOpen    bool
 		minIncrement    string
 		minSquadSize    int
 		maxSquadSize    int
@@ -130,6 +132,15 @@ func (r *AuctionWorkflowRepository) AcceptBid(
 	if currentPlayerID == nil ||
 		*currentPlayerID != params.RoomPlayerID {
 		return nil, errors.New("player is not currently in auction")
+	}
+
+	// Read wall-clock time only after acquiring the auction row lock.
+	err = tx.QueryRow(ctx, `SELECT COALESCE(timer_deadline_at > clock_timestamp(), FALSE) FROM auctions WHERE id=$1`, params.AuctionID).Scan(&deadlineOpen)
+	if err != nil {
+		return nil, fmt.Errorf("check bid deadline: %w", err)
+	}
+	if !deadlineOpen {
+		return nil, errors.New("bidding deadline expired or not initialized")
 	}
 
 	// Lock and validate team.
@@ -373,6 +384,13 @@ func (r *AuctionWorkflowRepository) AcceptBid(
 		return nil, fmt.Errorf("get bid sequence: %w", err)
 	}
 
+	// Recheck after all validation, immediately before writing the bid.
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(timer_deadline_at > clock_timestamp(),FALSE) FROM auctions WHERE id=$1`, params.AuctionID).Scan(&deadlineOpen); err != nil {
+		return nil, fmt.Errorf("recheck bid deadline: %w", err)
+	}
+	if !deadlineOpen {
+		return nil, errors.New("bidding deadline expired")
+	}
 	// Insert accepted bid.
 	bid := &Bid{}
 
@@ -418,24 +436,31 @@ func (r *AuctionWorkflowRepository) AcceptBid(
 	}
 
 	// Update current bid and reset seven-second timer.
-	_, err = tx.Exec(ctx, `
+	var deadline time.Time
+	err = tx.QueryRow(ctx, `
 		UPDATE auctions
 		SET current_bid = $1,
 		    current_bidder_team_id = $2,
-		    timer_started_at = NOW(),
-		    timer_deadline_at = NOW() + INTERVAL '7 seconds',
+		    timer_started_at = statement_timestamp(),
+		    timer_deadline_at = statement_timestamp() + INTERVAL '7 seconds',
 		    updated_at = NOW()
 		WHERE id = $3
+        RETURNING timer_deadline_at
 	`,
 		params.BidAmount,
 		params.TeamID,
 		params.AuctionID,
-	)
+	).Scan(&deadline)
 
 	if err != nil {
 		return nil, fmt.Errorf("update auction: %w", err)
 	}
 
+	// Generate authoritative event payload including the committed timer deadline.
+	eventPayload, err := json.Marshal(map[string]any{"auction_id": params.AuctionID, "room_id": roomID, "room_player_id": params.RoomPlayerID, "team_id": params.TeamID, "amount": bid.BidAmount, "timer_seconds": 7, "timer_deadline_at": deadline})
+	if err != nil {
+		return nil, err
+	}
 	// Generate independent auction event sequence.
 	var eventSequence int64
 
@@ -466,7 +491,7 @@ func (r *AuctionWorkflowRepository) AcceptBid(
 		roomID,
 		params.AuctionID,
 		eventSequence,
-		params.EventPayload,
+		eventPayload,
 	).Scan(&eventID)
 
 	if err != nil {
@@ -488,7 +513,7 @@ func (r *AuctionWorkflowRepository) AcceptBid(
 		roomID,
 		params.AuctionID,
 		eventID,
-		params.EventPayload,
+		eventPayload,
 	)
 
 	if err != nil {

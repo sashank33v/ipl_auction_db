@@ -7,28 +7,47 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/database"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
 )
 
 type RoomPlayerService struct {
+	txManager      *database.TransactionManager
 	roomPlayerRepo *repository.RoomPlayerRepository
 	roomRepo       *repository.RoomRepository
 	playerRepo     *repository.PlayerRepository
 }
 
 func NewRoomPlayerService(
+	txManager *database.TransactionManager,
 	roomPlayerRepo *repository.RoomPlayerRepository,
 	roomRepo *repository.RoomRepository,
 	playerRepo *repository.PlayerRepository,
 ) *RoomPlayerService {
 	return &RoomPlayerService{
+		txManager:      txManager,
 		roomPlayerRepo: roomPlayerRepo,
 		roomRepo:       roomRepo,
 		playerRepo:     playerRepo,
 	}
 }
 
-func (s *RoomPlayerService) AddPlayerToRoom(
+func (s *RoomPlayerService) AddPlayerToRoom(ctx context.Context, roomID, playerID string) error {
+	if s.txManager == nil {
+		return errors.New("transaction manager is not configured")
+	}
+	return s.txManager.WithinTransaction(ctx, func(tx pgx.Tx) error {
+		scoped := &RoomPlayerService{
+			roomPlayerRepo: repository.NewRoomPlayerRepository(tx),
+			roomRepo:       repository.NewRoomRepository(tx),
+			playerRepo:     repository.NewPlayerRepository(tx),
+		}
+		return scoped.addPlayerToRoomLocked(ctx, roomID, playerID)
+	})
+}
+
+func (s *RoomPlayerService) addPlayerToRoomLocked(
 	ctx context.Context,
 	roomID string,
 	playerID string,
@@ -37,7 +56,7 @@ func (s *RoomPlayerService) AddPlayerToRoom(
 		return errors.New("room ID and player ID are required")
 	}
 
-	room, err := s.roomRepo.GetByID(ctx, roomID)
+	room, err := s.roomRepo.GetByIDForUpdate(ctx, roomID)
 	if err != nil {
 		return fmt.Errorf("get room: %w", err)
 	}

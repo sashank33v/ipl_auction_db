@@ -11,10 +11,6 @@ import (
 
 const sessionCookieName = "ipl_session"
 
-type contextKey string
-
-const userIDContextKey contextKey = "user_id"
-
 func Auth(sessionService *services.SessionService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -53,9 +49,4 @@ func Auth(sessionService *services.SessionService) func(http.Handler) http.Handl
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-func UserIDFromContext(ctx context.Context) (string, bool) {
-	userID, ok := ctx.Value(userIDContextKey).(string)
-	return userID, ok
 }

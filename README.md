@@ -650,6 +650,15 @@ outcome.
 -   Timer state and deadlines are persisted sufficiently to support
     restart recovery.
 
+Main-queue MVP implementation (Milestone 3A):
+
+- A server worker checks persisted deadlines at 250 ms intervals. Row locks and rechecks, rather than ticker precision, determine bid/settlement ordering.
+- A three-second transition interval before each automatic reveal (including the first) gives the interface time for result presentation. This is an implementation default, not an extension of the bidding window.
+- Starting the auction automatically schedules the first player; manual nomination HTTP route is superseded. Main pool exhaustion leaves the auction active and idle until host-controlled unsold rounds are implemented.
+- On process startup active auctions enter `RECOVERING` before HTTP starts. `POST /auctions/{auctionID}/recover/resume` is host-only for synchronized MAIN rooms. It preserves the current player and accepted bid and opens a fresh full 15-second (no bid) or 7-second (accepted bid) window because downtime is not bidding time. Exact pre-crash remaining time restoration and multi-instance coordination are future work.
+- Single backend instance only for this MVP. WebSocket broadcast, pause/skip, unsold mini-auctions and final completion remain future milestones.
+
+
 ## WebSocket protocol
 
 One WebSocket connection is maintained per participant per room.
@@ -1067,7 +1076,9 @@ secrets.
 -   Seed the player master dataset through a controlled import process.
 -   Validate player identity, role, base price, nationality/overseas
     classification, and eligibility before import.
--   Keep reference-only players separate from auction-eligible players.
+-   Approved fantasy pool: all 543 unique players (413 original auction candidates and 130 retained-source records) are eligible. Preserve the original source cohort as provenance, not an eligibility restriction.
+-   Retained-source base prices follow the approved fantasy classification (capped ₹2 Cr, uncapped ₹0.50 Cr; ₹2 Cr fallback if a game price is unavailable).
+-   Each waiting room receives a persisted 1–543 category-wise queue. Host can reorder categories and shuffle selected categories before start; a default queue is generated at start if not already prepared. The order is frozen once started. Empty categories are skipped.
 -   Preserve source and verification metadata for imported player
     records.
 -   Do not silently change approved auction rules through seed data.

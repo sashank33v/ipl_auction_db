@@ -48,12 +48,12 @@ func main() {
 	nominationWorkflowService := services.NewUnsoldNominationWorkflowService(txManager)
 	userService := services.NewUserService(userRepo)
 	sessionService := services.NewSessionService(sessionRepo)
-	roomService := services.NewRoomService(roomRepo)
-	participantService := services.NewRoomParticipantService(participantRepo, roomRepo)
-	teamService := services.NewTeamService(teamRepo, roomRepo, participantRepo)
+	roomService := services.NewRoomService(txManager, roomRepo)
+	participantService := services.NewRoomParticipantService(txManager, participantRepo, roomRepo)
+	teamService := services.NewTeamService(txManager, teamRepo, roomRepo, participantRepo)
 	playerService := services.NewPlayerService(playerRepo)
-	roomPlayerService := services.NewRoomPlayerService(roomPlayerRepo, roomRepo, playerRepo)
-	auctionService := services.NewAuctionService(auctionRepo, roomRepo, participantService, teamService)
+	roomPlayerService := services.NewRoomPlayerService(txManager, roomPlayerRepo, roomRepo, playerRepo)
+	auctionService := services.NewAuctionService(txManager, auctionRepo, roomRepo, participantService, teamService)
 	bidService := services.NewBidService(bidRepo, auctionRepo)
 	squadService := services.NewSquadService(squadRepo, teamRepo)
 	nominationService := services.NewUnsoldNominationService(nominationRepo, auctionRepo, teamRepo, roomPlayerRepo, nominationWorkflowService)
@@ -74,7 +74,7 @@ func main() {
 	eventHandler := handlers.NewAuctionEventHandler(eventService, auctionService, participantService)
 	mainNominationHandler := handlers.NewMainNominationHandler(mainNominationWorkflowService)
 
-	router := api.NewRouter(cfg.FrontendURL, authHandler, meHandler, roomHandler, participantHandler, teamHandler, playerHandler, roomPlayerHandler, auctionHandler, bidHandler, squadHandler, nominationHandler, mainNominationHandler, eventHandler, sessionService)
+	router := api.NewRouter(cfg.FrontendURL, authHandler, meHandler, roomHandler, participantHandler, teamHandler, playerHandler, roomPlayerHandler, auctionHandler, bidHandler, squadHandler, nominationHandler, mainNominationHandler, eventHandler, sessionService, userService)
 
 	server := &http.Server{
 		Addr:    ":" + cfg.ServerPort,
@@ -82,6 +82,16 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	engine := services.NewAuctionEngineService(txManager, repository.NewAuctionEngineRepository(db))
+	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, 10*time.Second)
+	recovered, err := engine.RecoverOnStartup(recoveryCtx)
+	recoveryCancel()
+	if err != nil {
+		log.Fatalf("Auction recovery gate failed: %v", err)
+	}
+	log.Printf("Auction engine started; %d interrupted auctions require host resume", recovered)
+	engineDone := make(chan struct{})
+	go func() { defer close(engineDone); engine.Run(ctx) }()
 	go func() {
 		log.Printf("Server starting on port http://localhost:%s", cfg.ServerPort)
 
@@ -103,5 +113,6 @@ func main() {
 		}
 	}
 
+	<-engineDone
 	log.Println("Server stopped")
 }

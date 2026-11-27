@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -140,6 +141,25 @@ func (r *MainNominationWorkflowRepository) NominatePlayer(
 		)
 	}
 
+	// Generated main queues are authoritative. Existing unsequenced legacy auctions retain manual nomination.
+	var nextID string
+	err = tx.QueryRow(ctx, `SELECT id FROM room_players WHERE room_id=$1 AND status='AVAILABLE' AND auction_sequence IS NOT NULL ORDER BY auction_sequence,id LIMIT 1`, roomID).Scan(&nextID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("read next queue player: %w", err)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		var generated bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM room_players WHERE room_id=$1 AND auction_sequence IS NOT NULL)`, roomID).Scan(&generated); err != nil {
+			return nil, err
+		}
+		if generated {
+			return nil, errors.New("no available queued players remain")
+		}
+	}
+	if err == nil && nextID != params.PlayerID {
+		return nil, errors.New("only the next available queued player can be nominated")
+	}
+
 	// 4. Lock and validate the room player.
 	var (
 		masterPlayerID string
@@ -203,19 +223,21 @@ func (r *MainNominationWorkflowRepository) NominatePlayer(
 	}
 
 	// 6. Update auction and start the 15-second timer.
-	_, err = tx.Exec(ctx, `
+	var deadline time.Time
+	err = tx.QueryRow(ctx, `
 		UPDATE auctions
 		SET current_player_id = $1,
 		    current_bid = NULL,
 		    current_bidder_team_id = NULL,
-		    timer_started_at = NOW(),
-		    timer_deadline_at = NOW() + INTERVAL '15 seconds',
-		    updated_at = NOW()
+		    timer_started_at = statement_timestamp(),
+		    timer_deadline_at = statement_timestamp() + INTERVAL '15 seconds',
+		    updated_at = statement_timestamp()
 		WHERE id = $2
+        RETURNING timer_deadline_at
 	`,
 		params.PlayerID,
 		params.AuctionID,
-	)
+	).Scan(&deadline)
 
 	if err != nil {
 		return nil, fmt.Errorf("update auction: %w", err)
@@ -223,16 +245,17 @@ func (r *MainNominationWorkflowRepository) NominatePlayer(
 
 	// 7. Build nomination event payload.
 	payload, err := json.Marshal(map[string]interface{}{
-		"auction_id":     params.AuctionID,
-		"room_id":        roomID,
-		"room_player_id": params.PlayerID,
-		"player_id":      masterPlayerID,
-		"player_name":    playerName,
-		"base_price":     basePrice,
-		"status":         "IN_AUCTION",
-		"round_number":   roundNumber,
-		"round_type":     roundType,
-		"timer_seconds":  15,
+		"auction_id":        params.AuctionID,
+		"room_id":           roomID,
+		"room_player_id":    params.PlayerID,
+		"player_id":         masterPlayerID,
+		"player_name":       playerName,
+		"base_price":        basePrice,
+		"status":            "IN_AUCTION",
+		"round_number":      roundNumber,
+		"round_type":        roundType,
+		"timer_seconds":     15,
+		"timer_deadline_at": deadline,
 	})
 
 	if err != nil {

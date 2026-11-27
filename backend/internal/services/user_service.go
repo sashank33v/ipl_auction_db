@@ -127,3 +127,12 @@ func (s *UserService) DeleteUser(
 
 	return nil
 }
+
+// IsAdmin reads the current permission, rather than trusting a client or session claim.
+func (s *UserService) IsAdmin(ctx context.Context, id string) (bool, error) {
+	user, err := s.GetUserByID(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return user.IsAdmin, nil
+}

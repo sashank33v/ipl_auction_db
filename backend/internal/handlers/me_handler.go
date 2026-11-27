@@ -35,6 +35,7 @@ func (h *MeHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		"id":       user.ID,
 		"username": user.Username,
 		"email":    user.Email,
+		"is_admin": user.IsAdmin,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -9,14 +9,16 @@ import (
 )
 
 type RoomPlayer struct {
-	ID        string    `json:"id"`
-	RoomID    string    `json:"room_id"`
-	PlayerID  string    `json:"player_id"`
-	FullName  string    `json:"full_name"`
-	BasePrice string    `json:"base_price"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID              string    `json:"id"`
+	RoomID          string    `json:"room_id"`
+	PlayerID        string    `json:"player_id"`
+	FullName        string    `json:"full_name"`
+	AuctionCategory string    `json:"auction_category"`
+	AuctionSequence *int      `json:"auction_sequence"`
+	BasePrice       string    `json:"base_price"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 type RoomPlayerQueueItem struct {
 	RoomPlayerID    string `json:"room_player_id"`
@@ -77,10 +79,10 @@ func (r *RoomPlayerRepository) GetByID(
 	id string,
 ) (*RoomPlayer, error) {
 	query := `
-		SELECT id, room_id, player_id, base_price,
-		       status, created_at, updated_at
-		FROM room_players
-		WHERE id = $1
+		SELECT rp.id, rp.room_id, rp.player_id, rp.base_price,
+		       rp.status, rp.created_at, rp.updated_at, p.full_name, COALESCE(p.auction_category,''), rp.auction_sequence
+		FROM room_players rp JOIN players p ON p.id=rp.player_id
+		WHERE rp.id = $1
 	`
 
 	player := &RoomPlayer{}
@@ -93,6 +95,9 @@ func (r *RoomPlayerRepository) GetByID(
 		&player.Status,
 		&player.CreatedAt,
 		&player.UpdatedAt,
+		&player.FullName,
+		&player.AuctionCategory,
+		&player.AuctionSequence,
 	)
 
 	if err != nil {
@@ -111,10 +116,10 @@ func (r *RoomPlayerRepository) GetByRoomAndPlayer(
 	playerID string,
 ) (*RoomPlayer, error) {
 	query := `
-		SELECT id, room_id, player_id, base_price,
-		       status, created_at, updated_at
-		FROM room_players
-		WHERE room_id = $1 AND player_id = $2
+		SELECT rp.id, rp.room_id, rp.player_id, rp.base_price,
+		       rp.status, rp.created_at, rp.updated_at, p.full_name, COALESCE(p.auction_category,''), rp.auction_sequence
+		FROM room_players rp JOIN players p ON p.id=rp.player_id
+		WHERE rp.room_id = $1 AND rp.player_id = $2
 	`
 
 	player := &RoomPlayer{}
@@ -127,6 +132,9 @@ func (r *RoomPlayerRepository) GetByRoomAndPlayer(
 		&player.Status,
 		&player.CreatedAt,
 		&player.UpdatedAt,
+		&player.FullName,
+		&player.AuctionCategory,
+		&player.AuctionSequence,
 	)
 
 	if err != nil {
@@ -152,11 +160,11 @@ func (r *RoomPlayerRepository) GetByRoom(
     rp.base_price,
     rp.status,
     rp.created_at,
-    rp.updated_at
+    rp.updated_at, COALESCE(p.auction_category, ''), rp.auction_sequence
 FROM room_players rp
 JOIN players p ON p.id = rp.player_id
 WHERE rp.room_id = $1
-ORDER BY p.full_name ASC
+ORDER BY rp.auction_sequence ASC NULLS LAST, p.full_name ASC, rp.id
 	`
 
 	return r.getPlayers(ctx, query, roomID)
@@ -176,12 +184,11 @@ func (r *RoomPlayerRepository) GetByRoomAndStatus(
     rp.base_price,
     rp.status,
     rp.created_at,
-    rp.updated_at
+    rp.updated_at, COALESCE(p.auction_category, ''), rp.auction_sequence
 FROM room_players rp
 JOIN players p ON p.id = rp.player_id
-WHERE rp.room_id = $1
-		WHERE rp.room_id = $1 AND rp.status = $2
-		ORDER BY rp.auction_sequence ASC
+WHERE rp.room_id = $1 AND rp.status = $2
+		ORDER BY rp.auction_sequence ASC NULLS LAST, p.full_name ASC, rp.id
 	`
 
 	return r.getPlayers(ctx, query, roomID, status)
@@ -212,6 +219,8 @@ func (r *RoomPlayerRepository) getPlayers(
 			&player.Status,
 			&player.CreatedAt,
 			&player.UpdatedAt,
+			&player.AuctionCategory,
+			&player.AuctionSequence,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan room player: %w", err)
@@ -277,6 +286,7 @@ func (r *RoomPlayerRepository) GetAvailablePlayersByCategory(
           AND p.is_auction_eligible = TRUE
           AND p.is_active = TRUE
           AND rp.status = 'AVAILABLE'
+          AND rp.auction_sequence IS NOT NULL
         ORDER BY rp.auction_sequence ASC
     `
 

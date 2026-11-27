@@ -70,6 +70,26 @@ func (r *RoomRepository) Create(ctx context.Context, room *Room) error {
 }
 
 func (r *RoomRepository) GetByID(ctx context.Context, id string) (*Room, error) {
+	return r.getByID(ctx, id, "", false)
+}
+
+// GetByIDForUpdate must be used inside a transaction. All lobby mutations
+// acquire this room lock before checking capacity or auction status.
+func (r *RoomRepository) GetByIDForUpdate(ctx context.Context, id string) (*Room, error) {
+	if _, ok := r.db.(pgx.Tx); !ok {
+		return nil, fmt.Errorf("room lock requires a transaction")
+	}
+	return r.getByID(ctx, id, "", true)
+}
+
+func (r *RoomRepository) GetByIDForUser(ctx context.Context, id, userID string) (*Room, error) {
+	if userID == "" {
+		return nil, fmt.Errorf("user ID is required")
+	}
+	return r.getByID(ctx, id, userID, false)
+}
+
+func (r *RoomRepository) getByID(ctx context.Context, id, userID string, lock bool) (*Room, error) {
 	query := `
 		SELECT
 			id, room_code, host_user_id, name, status,
@@ -79,9 +99,17 @@ func (r *RoomRepository) GetByID(ctx context.Context, id string) (*Room, error) 
 		WHERE id = $1
 	`
 
+	args := []any{id}
+	if userID != "" {
+		query += ` AND (host_user_id=$2 OR EXISTS (SELECT 1 FROM room_participants rp WHERE rp.room_id=rooms.id AND rp.user_id=$2))`
+		args = append(args, userID)
+	}
+	if lock {
+		query += " FOR UPDATE"
+	}
 	room := &Room{}
 
-	err := r.db.QueryRow(ctx, query, id).Scan(
+	err := r.db.QueryRow(ctx, query, args...).Scan(
 		&room.ID,
 		&room.RoomCode,
 		&room.HostUserID,
@@ -106,14 +134,31 @@ func (r *RoomRepository) GetByID(ctx context.Context, id string) (*Room, error) 
 }
 
 func (r *RoomRepository) GetByCode(ctx context.Context, code string) (*Room, error) {
+	return r.getByCode(ctx, code, false)
+}
+
+func (r *RoomRepository) GetByCodeForUpdate(ctx context.Context, code string) (*Room, error) {
+	if _, ok := r.db.(pgx.Tx); !ok {
+		return nil, fmt.Errorf("room lock requires a transaction")
+	}
+
+	return r.getByCode(ctx, code, true)
+}
+
+func (r *RoomRepository) getByCode(ctx context.Context, code string, lock bool) (*Room, error) {
+
 	query := `
-		SELECT
-			id, room_code, host_user_id, name, status,
-			max_participants, starting_purse, min_squad_size,
-			max_squad_size, max_overseas_players, min_bid_increment
-		FROM rooms
-		WHERE room_code = $1
-	`
+        SELECT
+            id, room_code, host_user_id, name, status,
+            max_participants, starting_purse, min_squad_size,
+            max_squad_size, max_overseas_players, min_bid_increment
+        FROM rooms
+        WHERE room_code = $1
+    `
+
+	if lock {
+		query += " FOR UPDATE"
+	}
 
 	room := &Room{}
 
@@ -135,23 +180,25 @@ func (r *RoomRepository) GetByCode(ctx context.Context, code string) (*Room, err
 		if err == pgx.ErrNoRows {
 			return nil, nil
 		}
+
 		return nil, fmt.Errorf("failed to get room by code: %w", err)
 	}
 
 	return room, nil
 }
 
-func (r *RoomRepository) GetAll(ctx context.Context) ([]Room, error) {
+func (r *RoomRepository) GetForUser(ctx context.Context, userID string) ([]Room, error) {
 	query := `
 		SELECT
 			id, room_code, host_user_id, name, status,
 			max_participants, starting_purse, min_squad_size,
 			max_squad_size, max_overseas_players, min_bid_increment
-		FROM rooms
-		ORDER BY created_at DESC
+		FROM rooms r
+		WHERE r.host_user_id=$1 OR EXISTS (SELECT 1 FROM room_participants rp WHERE rp.room_id=r.id AND rp.user_id=$1)
+		ORDER BY r.created_at DESC
 	`
 
-	rows, err := r.db.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get rooms: %w", err)
 	}
@@ -230,5 +277,20 @@ func (r *RoomRepository) Delete(ctx context.Context, id string) error {
 		return pgx.ErrNoRows
 	}
 
+	return nil
+}
+
+// MarkInProgress is called while holding the room lock in the start transaction.
+func (r *RoomRepository) MarkInProgress(ctx context.Context, id string) error {
+	if _, ok := r.db.(pgx.Tx); !ok {
+		return fmt.Errorf("room transition requires a transaction")
+	}
+	tag, err := r.db.Exec(ctx, `UPDATE rooms SET status='IN_PROGRESS', updated_at=NOW() WHERE id=$1 AND status='WAITING'`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("room is not in waiting state")
+	}
 	return nil
 }

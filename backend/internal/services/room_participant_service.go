@@ -4,47 +4,96 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/sashank33v/ipl_auction_db/backend/internal/database"
 	"github.com/sashank33v/ipl_auction_db/backend/internal/repository"
 )
 
+var (
+	ErrInvalidRoomCode = errors.New("invalid room code")
+	ErrRoomClosed      = errors.New("room is not accepting participants")
+	ErrRoomFull        = errors.New("room is full")
+)
+
 type RoomParticipantService struct {
+	txManager       *database.TransactionManager
 	participantRepo *repository.RoomParticipantRepository
 	roomRepo        *repository.RoomRepository
 }
 
 func NewRoomParticipantService(
+	txManager *database.TransactionManager,
 	participantRepo *repository.RoomParticipantRepository,
 	roomRepo *repository.RoomRepository,
 ) *RoomParticipantService {
 	return &RoomParticipantService{
+		txManager:       txManager,
 		participantRepo: participantRepo,
 		roomRepo:        roomRepo,
 	}
 }
 
-func (s *RoomParticipantService) JoinRoom(
-	ctx context.Context,
-	roomID string,
-	userID string,
-) (*repository.RoomParticipant, error) {
-	if roomID == "" || userID == "" {
-		return nil, errors.New("room ID and user ID are required")
+func (s *RoomParticipantService) JoinRoom(ctx context.Context, roomCode, userID string) (*repository.RoomParticipant, error) {
+
+	if s.txManager == nil {
+		return nil, errors.New("transaction manager is not configured")
 	}
 
-	room, err := s.roomRepo.GetByID(ctx, roomID)
+	var result *repository.RoomParticipant
+
+	err := s.txManager.WithinTransaction(ctx, func(tx pgx.Tx) error {
+
+		scoped := &RoomParticipantService{
+			participantRepo: repository.NewRoomParticipantRepository(tx),
+			roomRepo:        repository.NewRoomRepository(tx),
+		}
+
+		var err error
+
+		result, err = scoped.joinRoomLocked(ctx, roomCode, userID)
+
+		return err
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (s *RoomParticipantService) joinRoomLocked(ctx context.Context, roomCode string, userID string) (*repository.RoomParticipant, error) {
+
+	roomCode = strings.ToUpper(strings.TrimSpace(roomCode))
+
+	if roomCode == "" {
+		return nil, ErrInvalidRoomCode
+	}
+
+	if userID == "" {
+		return nil, errors.New("user ID is required")
+	}
+
+	room, err := s.roomRepo.GetByCodeForUpdate(ctx, roomCode)
+
 	if err != nil {
 		return nil, fmt.Errorf("get room: %w", err)
 	}
+
 	if room == nil {
-		return nil, errors.New("room not found")
+		return nil, ErrInvalidRoomCode
 	}
+
+	roomID := room.ID
 
 	existing, err := s.participantRepo.GetByRoomAndUser(
 		ctx,
 		roomID,
 		userID,
 	)
+
 	if err != nil {
 		return nil, fmt.Errorf("check participant: %w", err)
 	}
@@ -54,16 +103,17 @@ func (s *RoomParticipantService) JoinRoom(
 	}
 
 	if room.Status != "WAITING" {
-		return nil, errors.New("room is not accepting participants")
+		return nil, ErrRoomClosed
 	}
 
 	participants, err := s.participantRepo.GetByRoom(ctx, roomID)
+
 	if err != nil {
 		return nil, fmt.Errorf("get room participants: %w", err)
 	}
 
-	if len(participants) >= int(room.MaxParticipants) {
-		return nil, errors.New("room is full")
+	if len(participants) >= room.MaxParticipants {
+		return nil, ErrRoomFull
 	}
 
 	participant := &repository.RoomParticipant{

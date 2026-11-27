@@ -15,7 +15,9 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	_ = godotenv.Load()
+	if err := godotenv.Load(); err != nil {
+		return nil, fmt.Errorf("Failed to load .env: %w", err)
+	}
 
 	cfg := &Config{
 		ServerPort:  getEnv("SERVER_PORT", "8000"),

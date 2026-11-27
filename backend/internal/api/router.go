@@ -12,7 +12,7 @@ import (
 	"github.com/sashank33v/ipl_auction_db/backend/internal/services"
 )
 
-func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler *handlers.MeHandler, roomHandler *handlers.RoomHandler, participantHandler *handlers.RoomParticipantHandler, teamHandler *handlers.TeamHandler, playerHandler *handlers.PlayerHandler, roomPlayerHandler *handlers.RoomPlayerHandler, auctionHandler *handlers.AuctionHandler, bidHandler *handlers.BidHandler, squadHandler *handlers.SquadHandler, nominationHandler *handlers.UnsoldNominationHandler, mainNominationHandler *handlers.MainNominationHandler, eventHandler *handlers.AuctionEventHandler, sessionService *services.SessionService) http.Handler {
+func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler *handlers.MeHandler, roomHandler *handlers.RoomHandler, participantHandler *handlers.RoomParticipantHandler, teamHandler *handlers.TeamHandler, playerHandler *handlers.PlayerHandler, roomPlayerHandler *handlers.RoomPlayerHandler, auctionHandler *handlers.AuctionHandler, bidHandler *handlers.BidHandler, squadHandler *handlers.SquadHandler, nominationHandler *handlers.UnsoldNominationHandler, mainNominationHandler *handlers.MainNominationHandler, eventHandler *handlers.AuctionEventHandler, sessionService *services.SessionService, userService *services.UserService) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(chimiddleware.RequestID)
@@ -41,7 +41,6 @@ func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler 
 			r.Post("/", roomHandler.CreateRoom)
 			r.Get("/", roomHandler.GetAllRooms)
 			r.Get("/{id}", roomHandler.GetRoomByID)
-			r.Get("/code/{code}", roomHandler.GetRoomByCode)
 			r.Put("/{id}", roomHandler.UpdateRoom)
 			r.Delete("/{id}", roomHandler.DeleteRoom)
 
@@ -56,6 +55,7 @@ func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler 
 
 			r.Post("/players", roomPlayerHandler.AddPlayerToRoom)
 			r.Get("/{roomID}/players", roomPlayerHandler.GetPlayersByRoom)
+			r.Post("/{roomID}/players/queue", roomPlayerHandler.PrepareAuctionQueue)
 			r.Get(
 				"/{roomID}/players/status/{status}",
 				roomPlayerHandler.GetPlayersByStatus,
@@ -87,6 +87,16 @@ func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler 
 		})
 
 		r.Route("/players", func(r chi.Router) {
+			r.Get("/", playerHandler.GetAllPlayers)
+			r.Get("/{id}", playerHandler.GetPlayerByID)
+			// Legacy write routes are retained for compatibility, but require admin permission.
+			r.With(appmiddleware.AdminOnly(userService.IsAdmin)).Post("/", playerHandler.CreatePlayer)
+			r.With(appmiddleware.AdminOnly(userService.IsAdmin)).Put("/{id}", playerHandler.UpdatePlayer)
+			r.With(appmiddleware.AdminOnly(userService.IsAdmin)).Delete("/{id}", playerHandler.DeletePlayer)
+		})
+
+		r.Route("/admin/players", func(r chi.Router) {
+			r.Use(appmiddleware.AdminOnly(userService.IsAdmin))
 			r.Post("/", playerHandler.CreatePlayer)
 			r.Get("/", playerHandler.GetAllPlayers)
 			r.Get("/{id}", playerHandler.GetPlayerByID)
@@ -127,10 +137,8 @@ func NewRouter(frontendURL string, authHandler *handlers.AuthHandler, meHandler 
 				"/{auctionID}/events",
 				eventHandler.GetEventsAfterSequence,
 			)
-			r.Post(
-				"/{auctionID}/nominate",
-				mainNominationHandler.NominatePlayer,
-			)
+			// Main queue nominations are now server-driven.
+			r.Post("/{auctionID}/recover/resume", auctionHandler.ResumeRecoveredAuction)
 		})
 		r.Get("/bids/{id}", bidHandler.GetBidByID)
 
